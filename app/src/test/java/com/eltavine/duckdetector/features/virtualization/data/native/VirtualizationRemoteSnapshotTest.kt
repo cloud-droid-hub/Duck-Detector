@@ -35,7 +35,7 @@ class VirtualizationRemoteSnapshotTest {
             PACKAGE_NAME=com.eltavine.duckdetector
             PROCESS_NAME=com.eltavine.duckdetector:isolated
             UID_NAME=u0_i321
-            PACKAGES_FOR_UID=com.eltavine.duckdetector$separator com.example.sidecar
+            PACKAGES_FOR_UID=com.eltavine.duckdetector$separator com.example.remoteprobe
             CLASS_PATH_ENTRIES=/data/app/base.apk$separator/data/app/host.apk
             SOURCE_DIR=/data/app/base.apk
             SPLIT_SOURCE_DIRS=/data/app/split_config.arm64_v8a.apk
