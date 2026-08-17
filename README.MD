@@ -77,7 +77,7 @@ Most detection feature modules (features) strictly follow this clear package str
  * **Android Studio** (Latest stable version recommended)
  * Android SDK 37.0 & Android Build Tools 37.0.0
  * **JDK** 17
- * Android **NDK** 30.0.14904198
+ * Android **NDK** 29.0.14206865
  * **CMake** 4.1.2
 ### Build Commands
 **Compile Debug Version:**
@@ -126,4 +126,3 @@ This project is open-sourced under the Apache License 2.0.
   &nbsp;
   <a href="https://github.com/5ec1cff" title="5ec1cff"><img src="https://images.weserv.nl/?url=https://github.com/5ec1cff.png&w=64&h=64&mask=circle" width="64" height="64" alt="5ec1cff"></a>
 </p>
-

@@ -5,7 +5,7 @@
   <a href="https://developer.android.com"><img src="https://img.shields.io/badge/targetSdk-37-3DDC84?logo=android&logoColor=white&style=flat-square" alt="targetSdk"></a>
   <a href="https://kotlinlang.org"><img src="https://img.shields.io/badge/Kotlin-2.3.21-7F52FF?logo=kotlin&logoColor=white&style=flat-square" alt="Kotlin"></a>
   <a href="https://developer.android.com/jetpack/compose"><img src="https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4?logo=jetpackcompose&logoColor=white&style=flat-square" alt="Jetpack Compose"></a>
-  <img src="https://img.shields.io/badge/NDK-30.0.14904198-555555?style=flat-square" alt="NDK">
+  <img src="https://img.shields.io/badge/NDK-29.0.14206865-555555?style=flat-square" alt="NDK">
   <a href="https://github.com/eltavine/Duck-Detector-Refactoring/releases"><img src="https://img.shields.io/github/downloads/eltavine/Duck-Detector-Refactoring/total?style=flat-square" alt="Downloads"></a>
 </p>
 
@@ -73,7 +73,7 @@ Duck-Detector-Refactoring/
  * **Android Studio** (推荐最新稳定版)
  * Android SDK 37.0 & Android Build Tools 37.0.0
  * **JDK** 17
- * Android **NDK** 30.0.14904198
+ * Android **NDK** 29.0.14206865
  * **CMake** 4.1.2
 ### 常用构建命令 / Build Commands
 **编译 Debug 版本：**
