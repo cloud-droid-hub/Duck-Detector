@@ -48,6 +48,7 @@ import com.eltavine.duckdetector.features.tee.data.verification.keystore.ImportK
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.ImportKeyRetainedAttestationNarrativeResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyLifecycleResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyMintCapabilityResult
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyMintCryptoCapabilityResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyMetadataSemanticsResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyMetadataShapeResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyPairConsistencyResult
@@ -55,6 +56,8 @@ import com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyboxI
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyboxImportResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2GenerateModeParcelFingerprintResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2HookResult
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2PostProcessingResult
+import com.eltavine.duckdetector.features.tee.data.verification.rkp.RkpProvisionedManufacturerResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.LegacyKeystorePathResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.ListEntriesBatchedResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.ListEntriesConsistencyResult
@@ -91,6 +94,98 @@ import org.junit.Test
 class TeeReportReducerTest {
 
     private val reducer = TeeReportReducer()
+
+    @Test
+    fun `isolated rsa oaep mgf1 failure remains failure`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                keyMintCapability = KeyMintCapabilityResult(
+                    executed = true,
+                    crypto = KeyMintCryptoCapabilityResult(
+                        rsaOaepMgf1Ok = false,
+                        rsaOaepMgf1Detail = "roundTrip=false, decryptedBytes=0.",
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(TeeVerdict.CONSISTENT, report.verdict)
+        assertEquals(1, report.supplementaryIndicatorCount)
+        assertEquals(TeeSignalLevel.FAIL, report.supplementaryReviewLevel)
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "KeyMint crypto" && it.level == TeeSignalLevel.FAIL
+        })
+    }
+
+    @Test
+    fun `rsa oaep unauthorized mgf1 digest remains failure`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                keyMintCapability = KeyMintCapabilityResult(
+                    executed = true,
+                    crypto = KeyMintCryptoCapabilityResult(
+                        rsaOaepMgf1Sha1Ok = false,
+                        rsaOaepMgf1Sha1Detail = "Unauthorized MGF1-SHA1 operation succeeded.",
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(TeeVerdict.CONSISTENT, report.verdict)
+        assertEquals(1, report.supplementaryIndicatorCount)
+        assertEquals(TeeSignalLevel.FAIL, report.supplementaryReviewLevel)
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "KeyMint crypto" && it.level == TeeSignalLevel.FAIL
+        })
+    }
+
+    @Test
+    fun `skipped mgf1 checks do not become crypto failures`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                keyMintCapability = KeyMintCapabilityResult(
+                    executed = true,
+                    crypto = KeyMintCryptoCapabilityResult(
+                        rsaOaepMgf1Executed = false,
+                        rsaOaepMgf1Ok = false,
+                        rsaOaepMgf1Detail = "Skipped because security levels disagree.",
+                        rsaOaepMgf1Sha1Executed = false,
+                        rsaOaepMgf1Sha1Ok = false,
+                        rsaOaepMgf1Sha1Detail = "Skipped because security levels disagree.",
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(0, report.supplementaryIndicatorCount)
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "KeyMint crypto" && it.level == TeeSignalLevel.INFO
+        })
+    }
+
+    @Test
+    fun `keymint crypto row hides full diagnostic behind copy payload`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                keyMintCapability = KeyMintCapabilityResult(
+                    executed = true,
+                    crypto = KeyMintCryptoCapabilityResult(
+                        rsaOaepMgf1Detail = "roundTrip=true, decryptedBytes=20.",
+                    ),
+                    diagnosticCopyText = "keymint-capability-diagnostic=v1\nrawBegin=true\nerrorCode=-78",
+                ),
+            ),
+        )
+
+        val row = report.sections.single { it.title == "Checks" }.items.single {
+            it.title == "KeyMint crypto"
+        }
+        assertTrue(row.body.contains("RSA-OAEP MGF1 ok"))
+        assertTrue(!row.body.contains("errorCode=-78"))
+        assertTrue(row.hiddenCopyText?.contains("tee-keymint-crypto-diagnostic=v1") == true)
+        assertTrue(row.hiddenCopyText?.contains("rawBegin=true") == true)
+        assertTrue(row.hiddenCopyText?.contains("errorCode=-78") == true)
+    }
 
     @Test
     fun `java hook becomes supplementary review without changing attestation verdict`() {
@@ -252,6 +347,29 @@ class TeeReportReducerTest {
             it.title == "KeyMint VINTF" &&
                 it.level == TeeSignalLevel.FAIL &&
                 it.body.contains("did not match", ignoreCase = true)
+        })
+    }
+
+    @Test
+    fun `keymint runtime identity mismatch becomes explicit supplementary failure`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                vintfKeyMintVersion = VintfKeyMintVersionResult(
+                    readable = true,
+                    anomalyKind = VintfKeyMintVersionAnomalyKind.MISMATCH,
+                    attestationVersion = 100,
+                    keymasterVersion = 300,
+                    detail = "Attestation and keymaster versions disagree on KeyMint runtime identity.",
+                ),
+            ),
+        )
+
+        assertEquals(1, report.supplementaryIndicatorCount)
+        assertEquals(TeeSignalLevel.FAIL, report.supplementaryReviewLevel)
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "KeyMint runtime identity" &&
+                it.level == TeeSignalLevel.FAIL &&
+                it.body.contains("AOSP single-runtime mapping")
         })
     }
 
@@ -2249,6 +2367,14 @@ class TeeReportReducerTest {
             executed = false,
             detail = "skipped",
         ),
+        postProcessing: Keystore2PostProcessingResult = Keystore2PostProcessingResult(
+            probeRan = false,
+            detail = "skipped",
+        ),
+        rkpProvisionedManufacturer: RkpProvisionedManufacturerResult = RkpProvisionedManufacturerResult(
+            probeRan = false,
+            detail = "skipped",
+        ),
         importKeyRetainedAttestationNarrative: ImportKeyRetainedAttestationNarrativeResult =
             ImportKeyRetainedAttestationNarrativeResult(
                 executed = false,
@@ -2373,6 +2499,8 @@ class TeeReportReducerTest {
             vintfKeyMintVersion = vintfKeyMintVersion,
             keystore2Hook = keystore2Hook,
             generateModeParcelFingerprint = generateModeParcelFingerprint,
+            postProcessing = postProcessing,
+            rkpProvisionedManufacturer = rkpProvisionedManufacturer,
             grantDomainFullChainSplit = grantDomainFullChainSplit,
             syntheticGrantGranteeBlindReadback = syntheticGrantGranteeBlindReadback,
             syntheticGrantGetKeyEntryAccessVectorBlindness = syntheticGrantGetKeyEntryAccessVectorBlindness,

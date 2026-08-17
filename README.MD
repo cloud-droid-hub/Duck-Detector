@@ -101,28 +101,16 @@ gradlew.bat :app:assembleDebug
  * **Hardware & Vendor Restrictions**: Due to OEM policies or sandbox rules, some probes may report downgraded statuses on specific models. Certain low-level checks rely strictly on the arm64-v8a ABI architecture.
 ## 📈 Status & Stars
 
-<p>
-  <img src="https://api.star-history.com/svg?repos=eltavine/Duck-Detector-Refactoring&type=Date" alt="Star History Chart" width="600">
-</p>
+<a href="https://www.star-history.com/?repos=eltavine%2FDuck-Detector-Refactoring&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=eltavine/Duck-Detector-Refactoring&type=date&theme=dark&legend=top-left&sealed_token=z8Kbufd8a78_gJi-_n_U1dbqg3bT3wexECwhrq7Vx1QpfiXBUdPXV5w_rUQSnu86aVeWxIJJENg8tVTng5ul8xki40oK_UhKF3-_gZgvrhWzbtd7OKm9kg" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=eltavine/Duck-Detector-Refactoring&type=date&legend=top-left&sealed_token=z8Kbufd8a78_gJi-_n_U1dbqg3bT3wexECwhrq7Vx1QpfiXBUdPXV5w_rUQSnu86aVeWxIJJENg8tVTng5ul8xki40oK_UhKF3-_gZgvrhWzbtd7OKm9kg" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=eltavine/Duck-Detector-Refactoring&type=date&legend=top-left&sealed_token=z8Kbufd8a78_gJi-_n_U1dbqg3bT3wexECwhrq7Vx1QpfiXBUdPXV5w_rUQSnu86aVeWxIJJENg8tVTng5ul8xki40oK_UhKF3-_gZgvrhWzbtd7OKm9kg" />
+ </picture>
+</a>
 
 ## ⚖️ Disclaimer
 This software is provided "as is", without warranty of any kind. It is designed for educational, diagnostic, and security research purposes only. The developers assume no liability for direct or indirect damage, data loss, or system instability resulting from use of this application. Relying on heuristic security detection is at your own risk.
 
 ## 📄 License
 This project is open-sourced under the Apache License 2.0.
-
-## 👥 Contributors
-
-### Code Contributors
-
-<a href="https://github.com/eltavine/Duck-Detector-Refactoring/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=eltavine/Duck-Detector-Refactoring" alt="Contributors" />
-</a>
-
-### Special Thanks
-
-<p>
-  <a href="https://github.com/aviraxp" title="aviraxp"><img src="https://images.weserv.nl/?url=https://github.com/aviraxp.png&w=64&h=64&mask=circle" width="64" height="64" alt="aviraxp"></a>
-  &nbsp;
-  <a href="https://github.com/5ec1cff" title="5ec1cff"><img src="https://images.weserv.nl/?url=https://github.com/5ec1cff.png&w=64&h=64&mask=circle" width="64" height="64" alt="5ec1cff"></a>
-</p>

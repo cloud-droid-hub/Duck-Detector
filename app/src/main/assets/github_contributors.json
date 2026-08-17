@@ -7,7 +7,7 @@
       "asm",
       "kotlin"
     ],
-    "contributions": 99,
+    "contributions": 74,
     "name": "eltavine",
     "avatarAssetPath": "github_contributors/avatars/eltavine.jpg",
     "summaryKey": "author_summary_eltavine",
@@ -19,7 +19,7 @@
       "cpp",
       "kotlin"
     ],
-    "contributions": 26,
+    "contributions": 34,
     "name": "XiaoTong6666",
     "avatarAssetPath": "github_contributors/avatars/xiaotong6666.jpg",
     "summaryKey": "author_summary_xiaotong",
@@ -40,7 +40,7 @@
   {
     "profileUrl": "https://github.com/947409161",
     "contributionKeys": ["ui"],
-    "contributions": 11,
+    "contributions": 13,
     "name": "947409161",
     "avatarAssetPath": "github_contributors/avatars/947409161.jpg",
     "summaryKey": "author_summary_947409161",
@@ -59,6 +59,14 @@
     "login": "AlexLiuDev233"
   },
   {
+    "profileUrl": "https://github.com/vvb2060",
+    "contributionKeys": [],
+    "contributions": 4,
+    "name": "vvb2060",
+    "avatarAssetPath": "github_contributors/avatars/vvb2060.jpg",
+    "login": "vvb2060"
+  },
+  {
     "profileUrl": "https://github.com/Searchur",
     "contributionKeys": [
       "ui",
@@ -71,12 +79,12 @@
     "login": "Searchur"
   },
   {
-    "profileUrl": "https://github.com/vvb2060",
+    "profileUrl": "https://github.com/NEURAX-FX",
     "contributionKeys": [],
     "contributions": 3,
-    "name": "vvb2060",
-    "avatarAssetPath": "github_contributors/avatars/vvb2060.jpg",
-    "login": "vvb2060"
+    "name": "NEURAX-FX",
+    "avatarAssetPath": "github_contributors/avatars/neurax-fx.jpg",
+    "login": "NEURAX-FX"
   },
   {
     "profileUrl": "https://github.com/VictorModi",
@@ -86,6 +94,14 @@
     "avatarAssetPath": "github_contributors/avatars/victormodi.jpg",
     "summaryKey": "author_summary_victor",
     "login": "VictorModi"
+  },
+  {
+    "profileUrl": "https://github.com/salvogiangri",
+    "contributionKeys": [],
+    "contributions": 3,
+    "name": "salvogiangri",
+    "avatarAssetPath": "github_contributors/avatars/salvogiangri.jpg",
+    "login": "salvogiangri"
   },
   {
     "profileUrl": "https://github.com/hamjin",
@@ -121,6 +137,14 @@
     "avatarAssetPath": "github_contributors/avatars/hsskyboy.jpg",
     "summaryKey": "author_summary_hsskyboy",
     "login": "HSSkyBoy"
+  },
+  {
+    "profileUrl": "https://github.com/MhmRdd",
+    "contributionKeys": [],
+    "contributions": 1,
+    "name": "MhmRdd",
+    "avatarAssetPath": "github_contributors/avatars/mhmrdd.jpg",
+    "login": "MhmRdd"
   },
   {
     "profileUrl": "https://github.com/SQMY-dor",
@@ -185,6 +209,14 @@
     "name": "cursoragent",
     "avatarAssetPath": "github_contributors/avatars/cursoragent.jpg",
     "login": "cursoragent"
+  },
+  {
+    "profileUrl": "https://github.com/Xiaobocai08",
+    "contributionKeys": [],
+    "contributions": 1,
+    "name": "Xiaobocai08",
+    "avatarAssetPath": "github_contributors/avatars/xiaobocai08.jpg",
+    "login": "Xiaobocai08"
   },
   {
     "profileUrl": "https://github.com/coolzyd9107",

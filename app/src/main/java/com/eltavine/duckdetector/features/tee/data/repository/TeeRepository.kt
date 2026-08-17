@@ -17,6 +17,7 @@
 package com.eltavine.duckdetector.features.tee.data.repository
 
 import android.content.Context
+import android.os.Build
 import com.eltavine.duckdetector.features.tee.data.attestation.AndroidAttestationCollector
 import com.eltavine.duckdetector.features.tee.data.native.TeeNativeBridge
 import com.eltavine.duckdetector.features.tee.data.preferences.TeeNetworkConsentStore
@@ -68,7 +69,12 @@ import com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingA
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingSideChannelProbe
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.UpdateSubcomponentProbe
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.UpdateSubcomponentStaleResponsePersistenceProbe
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2PostProcessingProbe
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2PostProcessingResult
+import com.eltavine.duckdetector.features.tee.data.verification.rkp.RkpProvisionedManufacturerProbe
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.VintfKeyMintVersionProbe
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.VintfKeyMintVersionFamily
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.VintfKeyMintVersionResult
 import com.eltavine.duckdetector.features.tee.data.verification.rkp.RkpExtensionAnalyzer
 import com.eltavine.duckdetector.features.tee.data.verification.strongbox.StrongBoxBehaviorProbeSuite
 import com.eltavine.duckdetector.features.tee.domain.TeeReport
@@ -130,6 +136,8 @@ class TeeRepository(
     private val idAttestationProbe = IdAttestationProbe()
     private val supplementaryAttestationInfoProbe = SupplementaryAttestationInfoProbe(appContext)
     private val vintfKeyMintVersionProbe = VintfKeyMintVersionProbe()
+    private val postProcessingProbe = Keystore2PostProcessingProbe()
+    private val rkpProvisionedManufacturerProbe = RkpProvisionedManufacturerProbe()
     private val strongBoxProbe = StrongBoxBehaviorProbeSuite(appContext, collector)
     private val soterProbe = SoterCapabilityProbe(appContext)
 
@@ -150,6 +158,30 @@ class TeeRepository(
             val bootConsistency = bootConsistencyProbe.inspect(snapshot)
             val supplementaryAttestationInfo = supplementaryAttestationInfoProbe.inspect(snapshot)
             val vintfKeyMintVersion = vintfKeyMintVersionProbe.inspect(snapshot)
+            // 这条探针要成对生成带 attestation 的 key，代价明显，因此只在硬件 KeyMint 层级下运行
+            // This probe generates attested keys pairwise and is visibly expensive, so it only runs on a hardware KeyMint tier.
+            // keystore2 的 RkpdProvisioned 分支从 Android 15 起才有 process_certificate_chain 调用点
+            // keystore2's RkpdProvisioned arm has no process_certificate_chain call site before Android 15
+            val postProcessing = if (Build.VERSION.SDK_INT < 35) {
+                Keystore2PostProcessingResult(
+                    probeRan = false,
+                    detail = "Skipped because keystore2 has no certificate post-processing call site below Android 15.",
+                )
+            } else if (snapshot.tier == TeeTier.TEE || snapshot.tier == TeeTier.STRONGBOX) {
+                runCatching {
+                    postProcessingProbe.inspect(useStrongBox = snapshot.tier == TeeTier.STRONGBOX)
+                }.getOrElse {
+                    Keystore2PostProcessingResult(
+                        probeRan = false,
+                        detail = "Keystore2 post-processing probe failed to start: ${it.message ?: it::class.java.simpleName}",
+                    )
+                }
+            } else {
+                Keystore2PostProcessingResult(
+                    probeRan = false,
+                    detail = "Skipped because the device did not expose a hardware-backed KeyMint tier.",
+                )
+            }
             val timingSideChannel = timingSideChannelProbe.inspect(
                 useStrongBox = false,
                 nativeSnapshot = native,
@@ -158,6 +190,7 @@ class TeeRepository(
                 useStrongBox = snapshot.tier == TeeTier.STRONGBOX,
                 deepChecksAllowed = snapshot.tier == TeeTier.TEE || snapshot.tier == TeeTier.STRONGBOX,
                 snapshot = snapshot,
+                vintfKeyMintVersion = vintfKeyMintVersion,
                 timingSideChannel = timingSideChannel,
             )
 
@@ -182,6 +215,8 @@ class TeeRepository(
                     vintfKeyMintVersion = vintfKeyMintVersion,
                     keystore2Hook = deepChecks.keystore2Hook,
                     generateModeParcelFingerprint = deepChecks.generateModeParcelFingerprint,
+                    postProcessing = postProcessing,
+                    rkpProvisionedManufacturer = rkpProvisionedManufacturerProbe.inspect(rkp, snapshot),
                     grantDomainFullChainSplit = deepChecks.grantDomainFullChainSplit,
                     syntheticGrantGranteeBlindReadback = deepChecks.syntheticGrantGranteeBlindReadback,
                     syntheticGrantGetKeyEntryAccessVectorBlindness =
@@ -220,6 +255,7 @@ class TeeRepository(
         useStrongBox: Boolean,
         deepChecksAllowed: Boolean,
         snapshot: com.eltavine.duckdetector.features.tee.data.attestation.AttestationSnapshot,
+        vintfKeyMintVersion: VintfKeyMintVersionResult,
         timingSideChannel: com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingSideChannelResult,
     ): DeferredChecks = coroutineScope {
         if (!deepChecksAllowed) {
@@ -229,7 +265,52 @@ class TeeRepository(
         val pairConsistency = async { pairConsistencyProbe.inspect(useStrongBox = useStrongBox) }
         val aesGcm = async { aesGcmProbe.inspect(useStrongBox = useStrongBox) }
         val lifecycle = async { lifecycleProbe.inspect(useStrongBox = useStrongBox) }
-        val keyMintCapability = async { keyMintCapabilityProbe.inspect(useStrongBox = useStrongBox) }
+        val keyMintCapability = async {
+            // KeyMint operations are obtained from one explicit IKeystoreSecurityLevel (TEE or
+            // StrongBox). If the attestation record names different security levels for the two
+            // version fields, testing either binder instance would test the wrong identity.
+            // KeyMint 操作来自一个明确的 IKeystoreSecurityLevel（TEE 或 StrongBox）。如果
+            // attestation record 的两个版本字段属于不同 security level，选择任一 binder
+            // 实例都会测错对象，因此 MGF1 子探针必须 skip，由独立一致性证据报 FAIL。
+            //
+            // AOSP references:
+            // system/hardware/interfaces/keystore2/aidl/android/system/keystore2/IKeystoreService.aidl
+            // https://android.googlesource.com/platform/system/hardware/interfaces/+/refs/heads/main/keystore2/aidl/android/system/keystore2/IKeystoreService.aidl
+            // system/hardware/interfaces/keystore2/aidl/android/system/keystore2/IKeystoreSecurityLevel.aidl
+            // https://android.googlesource.com/platform/system/hardware/interfaces/+/refs/heads/main/keystore2/aidl/android/system/keystore2/IKeystoreSecurityLevel.aidl
+            val tierConsistent = snapshot.attestationTier == null || snapshot.keymasterTier == null ||
+                snapshot.attestationTier == snapshot.keymasterTier
+            val nativeKeyMintObserved = listOfNotNull(snapshot.attestationVersion, snapshot.keymasterVersion)
+                .any { it >= 100 }
+            // AIDL KeyMint projects both attestation fields from the same interface version, while
+            // legacy Keymaster uses the explicit 2->1, 3->2, 4->3, 41->4 mapping below.
+            // AIDL KeyMint 的两个 attestation 字段来自同一个接口版本；legacy Keymaster 则使用
+            // 下方 AOSP 明确定义的 2->1、3->2、4->3、41->4 映射。
+            val runtimeIdentityConsistent = keyMintRuntimeIdentityConsistent(
+                attestationVersion = snapshot.attestationVersion,
+                keymasterVersion = snapshot.keymasterVersion,
+            )
+            keyMintCapabilityProbe.inspect(
+                attestationVersion = snapshot.attestationVersion,
+                keymasterVersion = snapshot.keymasterVersion,
+                declaredKeyMintVersion = vintfKeyMintVersion.declarations
+                    .filter {
+                        it.family == VintfKeyMintVersionFamily.KEYMINT_AIDL &&
+                            it.instance == if (useStrongBox) "strongbox" else "default"
+                    }
+                    .maxOfOrNull { it.expectedKeymasterVersion },
+                legacyKeymasterDeclared = !nativeKeyMintObserved && vintfKeyMintVersion.declarations.none {
+                    it.family == VintfKeyMintVersionFamily.KEYMINT_AIDL &&
+                        it.instance == if (useStrongBox) "strongbox" else "default"
+                } && vintfKeyMintVersion.declarations.any {
+                    it.family == VintfKeyMintVersionFamily.KEYMASTER_HIDL &&
+                        it.instance == if (useStrongBox) "strongbox" else "default"
+                },
+                securityLevelsConsistent = tierConsistent,
+                runtimeIdentityConsistent = runtimeIdentityConsistent,
+                useStrongBox = useStrongBox,
+            )
+        }
         val timing = async { timingProbe.inspect(useStrongBox = useStrongBox) }
         val oversizedChallenge = async { oversizedChallengeProbe.inspect(useStrongBox = useStrongBox) }
         val keyboxImport = async { keyboxImportProbe.inspect() }
@@ -344,6 +425,43 @@ class TeeRepository(
     }
 
 }
+
+internal fun keyMintRuntimeIdentityConsistent(
+    attestationVersion: Int?,
+    keymasterVersion: Int?,
+): Boolean {
+    if (attestationVersion == null || keymasterVersion == null) {
+        return true
+    }
+    val attestationIsKeyMint = attestationVersion >= KEYMINT_VERSION_FAMILY_BASE
+    val keymasterIsKeyMint = keymasterVersion >= KEYMINT_VERSION_FAMILY_BASE
+    if (attestationIsKeyMint != keymasterIsKeyMint) {
+        return false
+    }
+    if (attestationIsKeyMint) {
+        return attestationVersion == keymasterVersion
+    }
+    // keymasterVersion keeps the legacy Keymaster encoding (2, 3, 4, 41).
+    // attestationVersion is a separate attestation-record semantic (1, 2, 3, 4);
+    // this table is an AOSP-defined cross-field relationship, not linear arithmetic.
+    // keymasterVersion 保留旧 Keymaster 编码（2、3、4、41），attestationVersion 是独立的
+    // attestation record 语义（1、2、3、4）；这里是 AOSP 定义的跨字段映射，不是线性换算。
+    //
+    // AOSP references:
+    // system/keymaster/include/keymaster/km_openssl/attestation_record.h
+    // https://android.googlesource.com/platform/system/keymaster/+/refs/heads/main/include/keymaster/km_openssl/attestation_record.h
+    // hardware/interfaces/keymaster/4.0/vts/functional/keymaster_hidl_hal_test.cpp
+    // https://android.googlesource.com/platform/hardware/interfaces/+/refs/heads/main/keymaster/4.0/vts/functional/keymaster_hidl_hal_test.cpp
+    return LEGACY_KEYMASTER_TO_ATTESTATION_VERSION[keymasterVersion] == attestationVersion
+}
+
+private const val KEYMINT_VERSION_FAMILY_BASE = 100
+private val LEGACY_KEYMASTER_TO_ATTESTATION_VERSION = mapOf(
+    2 to 1,
+    3 to 2,
+    4 to 3,
+    41 to 4,
+)
 
 private fun GrantDomainFullChainSplitResult.hasDanger(): Boolean {
     return anomalyKind == GrantDomainAnomalyKind.ISOLATED_CHAIN_SPLIT ||

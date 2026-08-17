@@ -41,7 +41,9 @@ import com.eltavine.duckdetector.features.tee.data.verification.keystore.Supplem
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.TIMING_SIDE_CHANNEL_THRESHOLD_RATIO
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingSideChannelResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.UpdateSubcomponentStaleResponseAnomalyKind
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2PostProcessingAnomalyKind
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.VintfKeyMintVersionAnomalyKind
+import com.eltavine.duckdetector.features.tee.data.verification.rkp.RkpProvisionedManufacturerAnomalyKind
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.timingSideChannelRatio
 import java.time.LocalDate
 import java.time.Period
@@ -285,13 +287,55 @@ class TeeReportReducer(
                 )
             }
             if (artifacts.vintfKeyMintVersion.anomalyKind == VintfKeyMintVersionAnomalyKind.MISMATCH) {
+                // This is reported separately from the crypto capability row. A version/tier
+                // identity mismatch means the target backend cannot be selected unambiguously;
+                // it is evidence about identity, not evidence that an MGF1 operation executed.
+                // 这里必须与 crypto capability 分开报告。版本/tier 身份冲突表示无法唯一选中
+                // backend，它是“身份不一致”证据，不是“MGF1 已执行且失败”证据。
+                val runtimeIdentityMismatch = keyMintRuntimeIdentityMismatch(artifacts)
                 add(
                     fact(
-                        "KeyMint VINTF",
-                        "VINTF KeyMint version diverged from attestation. " +
-                            vintfKeyMintVersionValue(artifacts),
+                        if (runtimeIdentityMismatch) "KeyMint runtime identity" else "KeyMint VINTF",
+                        if (runtimeIdentityMismatch) {
+                            "Attestation and keymaster versions violate the AOSP single-runtime mapping. " +
+                                vintfKeyMintVersionValue(artifacts)
+                        } else {
+                            "VINTF KeyMint version diverged from attestation. " +
+                                vintfKeyMintVersionValue(artifacts)
+                        },
                         TeeSignalLevel.FAIL,
                         hiddenCopyText = artifacts.vintfKeyMintVersion.diagnosticCopyText,
+                    )
+                )
+            }
+            // ATTEST_KEY 路径在 security_level.rs 里没有后处理调用点，所以这两类都是强本地证据：
+            // RootOfTrust 在两条分支间分叉，或 RKP 路径的单侧延迟显著超过本机噪声
+            // The ATTEST_KEY path has no post-processing call site in security_level.rs, so both of these are strong
+            // local evidence: RootOfTrust forking between the arms, or one-sided RKP-path latency well above this
+            // device's own noise.
+            if (
+                artifacts.postProcessing.anomalyKind ==
+                    Keystore2PostProcessingAnomalyKind.ROOT_OF_TRUST_DIVERGENCE ||
+                artifacts.postProcessing.anomalyKind ==
+                    Keystore2PostProcessingAnomalyKind.TIMING_DETECTED
+            ) {
+                add(
+                    fact(
+                        "Cert post-processing",
+                        postProcessingValue(artifacts),
+                        TeeSignalLevel.FAIL,
+                    )
+                )
+            }
+            if (
+                artifacts.rkpProvisionedManufacturer.anomalyKind ==
+                    RkpProvisionedManufacturerAnomalyKind.MISMATCH
+            ) {
+                add(
+                    fact(
+                        "RKP manufacturer",
+                        rkpProvisionedManufacturerValue(artifacts),
+                        TeeSignalLevel.FAIL,
                     )
                 )
             }
@@ -994,7 +1038,8 @@ class TeeReportReducer(
                         fact(
                             "KeyMint crypto",
                             keyMintCryptoValue(artifacts),
-                            keyMintCryptoLevel(artifacts)
+                            keyMintCryptoLevel(artifacts),
+                            hiddenCopyText = keyMintCryptoDiagnosticCopyText(artifacts),
                         )
                     )
                     add(
@@ -1037,10 +1082,28 @@ class TeeReportReducer(
                     )
                     add(
                         fact(
-                            "KeyMint VINTF",
+                            if (keyMintRuntimeIdentityMismatch(artifacts)) {
+                                "KeyMint runtime identity"
+                            } else {
+                                "KeyMint VINTF"
+                            },
                             vintfKeyMintVersionValue(artifacts),
                             vintfKeyMintVersionLevel(artifacts),
                             hiddenCopyText = artifacts.vintfKeyMintVersion.diagnosticCopyText,
+                        )
+                    )
+                    add(
+                        fact(
+                            "Cert post-processing",
+                            postProcessingValue(artifacts),
+                            postProcessingLevel(artifacts),
+                        )
+                    )
+                    add(
+                        fact(
+                            "RKP manufacturer",
+                            rkpProvisionedManufacturerValue(artifacts),
+                            rkpProvisionedManufacturerLevel(artifacts),
                         )
                     )
                     add(
@@ -1625,6 +1688,27 @@ class TeeReportReducer(
                 else -> "${check.name} failed: ${check.detail}"
             }
         }
+    }
+
+    private fun keyMintCryptoDiagnosticCopyText(artifacts: TeeScanArtifacts): String = buildString {
+        appendLine("tee-keymint-crypto-diagnostic=v1")
+        appendLine("tier=${effectiveTier(artifacts)}")
+        appendLine("attestationTier=${artifacts.snapshot.attestationTier ?: "null"}")
+        appendLine("keymasterTier=${artifacts.snapshot.keymasterTier ?: "null"}")
+        appendLine("attestationVersion=${artifacts.snapshot.attestationVersion ?: "null"}")
+        appendLine("keymasterVersion=${artifacts.snapshot.keymasterVersion ?: "null"}")
+        appendLine("vintfKind=${artifacts.vintfKeyMintVersion.anomalyKind}")
+        appendLine(
+            "vintfCompared=" + artifacts.vintfKeyMintVersion.comparedDeclarations
+                .joinToString { it.summary }
+                .ifBlank { "none" },
+        )
+        appendLine("vintfDiagnostic:")
+        artifacts.vintfKeyMintVersion.diagnosticCopyText.lineSequence().forEach { line ->
+            appendLine("  $line")
+        }
+        appendLine("capabilityExecuted=${artifacts.keyMintCapability.executed}")
+        append(artifacts.keyMintCapability.diagnosticCopyText.ifBlank { "probeDiagnostic=unavailable" })
     }
 
     private fun keyMintCryptoLevel(artifacts: TeeScanArtifacts): TeeSignalLevel = when {
@@ -2871,11 +2955,22 @@ class TeeReportReducer(
         VintfKeyMintVersionAnomalyKind.NO_ATTESTED_VERSION -> TeeSignalLevel.INFO
     }
 
+    private fun keyMintRuntimeIdentityMismatch(artifacts: TeeScanArtifacts): Boolean {
+        val attestationVersion = artifacts.vintfKeyMintVersion.attestationVersion ?: return false
+        val keymasterVersion = artifacts.vintfKeyMintVersion.keymasterVersion ?: return false
+        return attestationVersion >= 100 &&
+            keymasterVersion >= 100 &&
+            attestationVersion != keymasterVersion
+    }
+
     private fun vintfKeyMintVersionValue(artifacts: TeeScanArtifacts): String {
         val result = artifacts.vintfKeyMintVersion
         return when (result.anomalyKind) {
-            VintfKeyMintVersionAnomalyKind.MISMATCH ->
+            VintfKeyMintVersionAnomalyKind.MISMATCH -> if (keyMintRuntimeIdentityMismatch(artifacts)) {
+                "Attestation and keymaster versions violate the AOSP single-runtime mapping. ${result.detail}"
+            } else {
                 "VINTF declaration did not match attested version. ${result.detail}"
+            }
             VintfKeyMintVersionAnomalyKind.NONE ->
                 "VINTF declaration matched attested KeyMint version. ${result.detail}"
             VintfKeyMintVersionAnomalyKind.UNREADABLE ->
@@ -2886,6 +2981,51 @@ class TeeReportReducer(
                 "Attested KeyMint version was unavailable. ${result.detail}"
         }
     }
+
+    private fun postProcessingLevel(artifacts: TeeScanArtifacts): TeeSignalLevel = when (
+        artifacts.postProcessing.anomalyKind
+    ) {
+        Keystore2PostProcessingAnomalyKind.ROOT_OF_TRUST_DIVERGENCE,
+        Keystore2PostProcessingAnomalyKind.TIMING_DETECTED -> TeeSignalLevel.FAIL
+        Keystore2PostProcessingAnomalyKind.TIMING_SUSPECT -> TeeSignalLevel.WARN
+        Keystore2PostProcessingAnomalyKind.NONE -> TeeSignalLevel.PASS
+        // 这三种都是"测不了"，不能当成通过 / These three all mean "could not test" and must not read as a pass
+        Keystore2PostProcessingAnomalyKind.RKP_UNAVAILABLE,
+        Keystore2PostProcessingAnomalyKind.RKP_FALLBACK_INCONCLUSIVE,
+        Keystore2PostProcessingAnomalyKind.UNMEASURABLE -> TeeSignalLevel.INFO
+    }
+
+    private fun postProcessingValue(artifacts: TeeScanArtifacts): String {
+        val result = artifacts.postProcessing
+        return when (result.anomalyKind) {
+            Keystore2PostProcessingAnomalyKind.ROOT_OF_TRUST_DIVERGENCE ->
+                "RootOfTrust differed between the RKP and ATTEST_KEY paths, which only certificate post-processing explains. ${result.detail}"
+            Keystore2PostProcessingAnomalyKind.TIMING_DETECTED ->
+                "The RKP path cost significantly more than the ATTEST_KEY path, matching certificate post-processing. ${result.detail}"
+            Keystore2PostProcessingAnomalyKind.TIMING_SUSPECT ->
+                "The RKP path was slower than the ATTEST_KEY path, but not far enough above this device's own noise to call. ${result.detail}"
+            Keystore2PostProcessingAnomalyKind.NONE ->
+                "The RKP and ATTEST_KEY paths agreed, showing no sign of certificate post-processing. ${result.detail}"
+            Keystore2PostProcessingAnomalyKind.RKP_UNAVAILABLE ->
+                "RKP key acquisition hard-failed, so the post-processing path could not be reached or tested. ${result.detail}"
+            Keystore2PostProcessingAnomalyKind.RKP_FALLBACK_INCONCLUSIVE ->
+                "The factory key was used instead of an RKP key, so the post-processing path was never traversed and this is untested rather than clean. ${result.detail}"
+            Keystore2PostProcessingAnomalyKind.UNMEASURABLE ->
+                "Not enough paired samples were collected to judge certificate post-processing. ${result.detail}"
+        }
+    }
+
+    private fun rkpProvisionedManufacturerLevel(artifacts: TeeScanArtifacts): TeeSignalLevel = when (
+        artifacts.rkpProvisionedManufacturer.anomalyKind
+    ) {
+        RkpProvisionedManufacturerAnomalyKind.MISMATCH -> TeeSignalLevel.FAIL
+        RkpProvisionedManufacturerAnomalyKind.NONE -> TeeSignalLevel.PASS
+        RkpProvisionedManufacturerAnomalyKind.DISMISSED_NO_PROVISIONING_MANUFACTURER,
+        RkpProvisionedManufacturerAnomalyKind.DISMISSED_NO_ATTESTED_MANUFACTURER -> TeeSignalLevel.INFO
+    }
+
+    private fun rkpProvisionedManufacturerValue(artifacts: TeeScanArtifacts): String =
+        artifacts.rkpProvisionedManufacturer.detail
 
     private fun supplementaryAttestationInfoValue(artifacts: TeeScanArtifacts): String {
         val result = artifacts.supplementaryAttestationInfo
