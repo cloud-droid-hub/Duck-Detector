@@ -41,9 +41,9 @@ class Keystore2PostProcessingProbe(
 
     fun inspect(useStrongBox: Boolean = false): Keystore2PostProcessingResult {
         val timeSource = StableTimeSource(
-            preferRegisterTimer = false,
-            registerTimerSource = { registerTimerBridge.readRegisterTimerNs() },
-            monotonicSource = { System.nanoTime() },
+            registerOnly = false,
+            readRegister = { registerTimerBridge.readRegisterTimerNs() },
+            readMono = { System.nanoTime() },
         )
         val warnings = mutableListOf<String>()
 
