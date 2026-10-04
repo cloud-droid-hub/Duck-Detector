@@ -45,6 +45,6 @@ namespace duckdetector::virtualization {
 
     std::string encode_trap(const TrapResult &result);
 
-    std::string run_sacrificial_syscall_pack();
+    std::string run_sac_pack();
 
 }  // namespace duckdetector::virtualization

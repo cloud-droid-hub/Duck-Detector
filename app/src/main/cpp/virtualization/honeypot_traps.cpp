@@ -15,6 +15,7 @@
  */
 
 #include "virtualization/honeypot_traps.h"
+#include "virtualization/sac_signal.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -106,7 +107,7 @@ namespace duckdetector::virtualization {
             return result;
         }
 
-        bool g_sacrificialSyscallPackDisabled = false;
+        bool sac_blocked = false;
 
         std::string encode_basic_pack(
                 bool available,
@@ -164,7 +165,7 @@ namespace duckdetector::virtualization {
             return x0;
         }
 
-        struct SyscallAttemptTriplet {
+        struct CallTriplet {
             long libcRet = -1;
             int libcErrno = 0;
             long rawRet = -1;
@@ -176,10 +177,10 @@ namespace duckdetector::virtualization {
             long long asmElapsedNs = 0;
         };
 
-        struct SyscallItemAccumulator {
+        struct CallItem {
             std::string label;
-            int completedAttempts = 0;
-            int suspiciousAttempts = 0;
+            int done = 0;
+            int sus = 0;
             std::vector<TrapAttempt> attempts;
         };
 
@@ -187,11 +188,11 @@ namespace duckdetector::virtualization {
         bool run_syscall_item(
                 const std::string &label,
                 Callable callable,
-                SyscallItemAccumulator *accumulator
+                CallItem *accumulator
         ) {
             accumulator->label = label;
             for (int attempt = 0; attempt < 3; ++attempt) {
-                SyscallAttemptTriplet triplet = callable(attempt);
+                CallTriplet triplet = callable(attempt);
                 if (unsupported_syscall_errno(triplet.libcErrno) ||
                     unsupported_syscall_errno(triplet.rawErrno) ||
                     unsupported_syscall_errno(triplet.asmErrno)) {
@@ -212,9 +213,9 @@ namespace duckdetector::virtualization {
                 );
                 const bool timingMismatch = slowest > fastest * 4LL && slowest - fastest > 50000LL;
                 const bool suspicious = returnMismatch || timingMismatch;
-                accumulator->completedAttempts += 1;
+                accumulator->done += 1;
                 if (suspicious) {
-                    accumulator->suspiciousAttempts += 1;
+                    accumulator->sus += 1;
                 }
 
                 std::ostringstream detail;
@@ -229,11 +230,11 @@ namespace duckdetector::virtualization {
             return true;
         }
 
-        std::string encode_sacrificial_item(const SyscallItemAccumulator &item) {
+        std::string encode_sac_item(const CallItem &item) {
             std::ostringstream output;
             output << "ITEM=" << item.label << '\t' << 1 << '\t'
-                   << item.completedAttempts << '\t'
-                   << item.suspiciousAttempts << '\t'
+                   << item.done << '\t'
+                   << item.sus << '\t'
                    << encode_value(item.attempts.empty() ? "" : item.attempts.front().detail) << '\n';
             for (const auto &attempt: item.attempts) {
                 output << "ATTEMPT=" << item.label << '\t'
@@ -379,9 +380,9 @@ namespace duckdetector::virtualization {
 #endif
     }
 
-    std::string run_sacrificial_syscall_pack() {
+    std::string run_sac_pack() {
 #if defined(__aarch64__)
-        if (g_sacrificialSyscallPackDisabled) {
+        if (sac_blocked) {
             return encode_basic_pack(
                     true,
                     false,
@@ -404,6 +405,10 @@ namespace duckdetector::virtualization {
 
         if (child == 0) {
             close(pipefd[0]);
+            if (!sac_signal()) {
+                close(pipefd[1]);
+                _exit(1);
+            }
 
             auto call_via_syscall = [](long number,
                                        long arg0,
@@ -421,15 +426,15 @@ namespace duckdetector::virtualization {
                 return ret;
             };
 
-            std::vector<SyscallItemAccumulator> items;
+            std::vector<CallItem> items;
             items.reserve(5);
 
-            SyscallItemAccumulator openat2Item;
+            CallItem openat2Item;
             const bool openat2Supported = run_syscall_item("openat2", [&](int attempt) {
                 const std::string path = "/proc/self/virtualization_openat2_missing_" + std::to_string(attempt);
                 struct open_how how{};
                 how.flags = static_cast<std::uint64_t>(O_RDONLY | O_CLOEXEC);
-                SyscallAttemptTriplet triplet;
+                CallTriplet triplet;
                 const long long libcStart = monotonic_ns();
                 triplet.libcRet = call_via_syscall(
                         __NR_openat2,
@@ -469,11 +474,11 @@ namespace duckdetector::virtualization {
                 return triplet;
             }, &openat2Item);
 
-            SyscallItemAccumulator statxItem;
+            CallItem statxItem;
             const bool statxSupported = run_syscall_item("statx", [&](int attempt) {
                 const std::string path = "/proc/self/virtualization_statx_missing_" + std::to_string(attempt);
                 struct statx statxBuffer{};
-                SyscallAttemptTriplet triplet;
+                CallTriplet triplet;
                 const long long libcStart = monotonic_ns();
                 triplet.libcRet = call_via_syscall(
                         __NR_statx,
@@ -513,10 +518,10 @@ namespace duckdetector::virtualization {
                 return triplet;
             }, &statxItem);
 
-            SyscallItemAccumulator memfdItem;
+            CallItem memfdItem;
             const bool memfdSupported = run_syscall_item("memfd_create", [&](int attempt) {
                 const std::string name = "virt_memfd_" + std::to_string(attempt);
-                SyscallAttemptTriplet triplet;
+                CallTriplet triplet;
                 const long long libcStart = monotonic_ns();
                 triplet.libcRet = call_via_syscall(
                         __NR_memfd_create,
@@ -559,9 +564,9 @@ namespace duckdetector::virtualization {
                 return triplet;
             }, &memfdItem);
 
-            SyscallItemAccumulator pidfdItem;
+            CallItem pidfdItem;
             const bool pidfdSupported = run_syscall_item("pidfd_open", [&](int) {
-                SyscallAttemptTriplet triplet;
+                CallTriplet triplet;
                 const pid_t pid = getpid();
                 const long long libcStart = monotonic_ns();
                 triplet.libcRet = call_via_syscall(
@@ -605,11 +610,11 @@ namespace duckdetector::virtualization {
                 return triplet;
             }, &pidfdItem);
 
-            SyscallItemAccumulator renameat2Item;
-            const bool renameat2Supported = run_syscall_item("renameat2", [&](int attempt) {
+            CallItem renameat2Item;
+            const bool renameOK = run_syscall_item("renameat2", [&](int attempt) {
                 const std::string oldPath = "/proc/self/virtualization_renameat2_old_" + std::to_string(attempt);
                 const std::string newPath = "/proc/self/virtualization_renameat2_new_" + std::to_string(attempt);
-                SyscallAttemptTriplet triplet;
+                CallTriplet triplet;
                 const long long libcStart = monotonic_ns();
                 triplet.libcRet = call_via_syscall(
                         __NR_renameat2,
@@ -649,7 +654,7 @@ namespace duckdetector::virtualization {
                 return triplet;
             }, &renameat2Item);
 
-            if (!(openat2Supported && statxSupported && memfdSupported && pidfdSupported && renameat2Supported)) {
+            if (!(openat2Supported && statxSupported && memfdSupported && pidfdSupported && renameOK)) {
                 const std::string payload = encode_basic_pack(
                         true,
                         false,
@@ -671,7 +676,7 @@ namespace duckdetector::virtualization {
             payload << "AVAILABLE=1\nSUPPORTED=1\nDISABLED=0\nDETAIL="
                     << encode_value("Executed the syscall pack in a sacrificial child process.") << '\n';
             for (const auto &item: items) {
-                payload << encode_sacrificial_item(item);
+                payload << encode_sac_item(item);
             }
             const std::string serialized = payload.str();
             write(pipefd[1], serialized.data(), serialized.size());
@@ -690,13 +695,14 @@ namespace duckdetector::virtualization {
         }
         close(pipefd[0]);
 
-        if (WIFSIGNALED(status) && WTERMSIG(status) == SIGSYS) {
-            g_sacrificialSyscallPackDisabled = true;
+        if ((WIFEXITED(status) && WEXITSTATUS(status) == sac_sig_exit) ||
+            (WIFSIGNALED(status) && WTERMSIG(status) == SIGSYS)) {
+            sac_blocked = true;
             return encode_basic_pack(
                     true,
                     false,
                     true,
-                    "Sacrificial syscall child died with SIGSYS. The helper process will not run this pack again."
+                    "Sacrificial syscall child was blocked by SIGSYS. The helper process will not run this pack again."
             );
         }
         if (!WIFEXITED(status) || WEXITSTATUS(status) != 0 || payload.empty()) {

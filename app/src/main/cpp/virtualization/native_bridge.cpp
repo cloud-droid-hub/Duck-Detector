@@ -75,9 +75,13 @@ Java_com_eltavine_duckdetector_features_virtualization_data_native_Virtualizatio
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_eltavine_duckdetector_features_virtualization_data_native_VirtualizationNativeBridge_nativeRunSacrificialSyscallPack(
+jni_sac_pack(JNIEnv *env, jobject) __asm__(
+        "Java_com_eltavine_duckdetector_features_virtualization_data_native_VirtualizationNativeBridge_nativeRunSacrificialSyscallPack");
+
+extern "C" JNIEXPORT jstring JNICALL
+jni_sac_pack(
         JNIEnv *env,
         jobject
 ) {
-    return to_jstring(env, duckdetector::virtualization::run_sacrificial_syscall_pack());
+    return to_jstring(env, duckdetector::virtualization::run_sac_pack());
 }

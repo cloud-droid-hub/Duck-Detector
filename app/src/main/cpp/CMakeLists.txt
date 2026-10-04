@@ -139,10 +139,11 @@ set(ZYGISK_SOURCES
     zygisk/fdtrap_bridge.cpp
 )
 
-set(VIRTUALIZATION_SOURCES
+set(VIRT_SOURCES
     virtualization/egl_probe.cpp
     virtualization/snapshot_builder.cpp
     virtualization/honeypot_traps.cpp
+    virtualization/sac_signal.cpp
     virtualization/native_bridge.cpp
 )
 
@@ -179,7 +180,7 @@ add_library(duckdetector SHARED
     ${NATIVE_ROOT_SOURCES}
     ${LSPOSED_SOURCES}
     ${ZYGISK_SOURCES}
-    ${VIRTUALIZATION_SOURCES}
+    ${VIRT_SOURCES}
     ${TEE_ASM_SOURCES}
     ${VIRTUALIZATION_ASM_SOURCES}
 )
