@@ -36,15 +36,11 @@ import com.eltavine.duckdetector.features.tee.data.verification.keystore.GrantDo
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.SyntheticGrantGetKeyEntryAccessVectorBlindnessAnomalyKind
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.SyntheticGrantGranteeBlindReadbackAnomalyKind
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.GrantSelfDomainAnomalyKind
-import com.eltavine.duckdetector.features.tee.data.verification.keystore.MIN_RATIO_SAMPLE_COUNT
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.SupplementaryAttestationInfoAnomalyKind
-import com.eltavine.duckdetector.features.tee.data.verification.keystore.TIMING_SIDE_CHANNEL_THRESHOLD_RATIO
-import com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingSideChannelResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.UpdateSubcomponentStaleResponseAnomalyKind
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2PostProcessingAnomalyKind
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.VintfKeyMintVersionAnomalyKind
 import com.eltavine.duckdetector.features.tee.data.verification.rkp.RkpProvisionedManufacturerAnomalyKind
-import com.eltavine.duckdetector.features.tee.data.verification.keystore.timingSideChannelRatio
 import java.time.LocalDate
 import java.time.Period
 import java.util.Locale
@@ -54,43 +50,17 @@ class TeeReportReducer(
     private val exportFormatter: TeeExportFormatter = TeeExportFormatter(),
 ) {
 
-    private enum class GenerateModeAnomalyState {
+    private enum class GenState {
         MATCHED,
         CLEAN,
         UNAVAILABLE,
-    }
-
-    private enum class TimingSideChannelSkipSignature(
-        val summary: String,
-        val rowLabel: String,
-        val level: TeeSignalLevel,
-    ) {
-        // 这些标签只在“测量未建立”的 skip 语义里生效，用来把静态栈特征提升成可见的 patch-mode 结论。
-        // These labels only apply to skip semantics where measurement never started, promoting static stack signatures into visible patch-mode outcomes.
-        TRICKY_STORE_PATCH_MODE(
-            // 用户可见文案统一收敛成“恶意模块指纹”，避免把具体模块/模式名暴露给最终展示层。
-            // User-visible wording is intentionally collapsed into a generic malicious-module fingerprint message so the UI does not expose vendor/module-specific labels.
-            summary = "Detected malicious-module fingerprint during timing skip.",
-            rowLabel = "Detected malicious-module fingerprint",
-            level = TeeSignalLevel.FAIL,
-        ),
-        TEE_SIMULATOR_PATCH_MODE(
-            summary = "Detected malicious-module fingerprint during timing skip.",
-            rowLabel = "Detected malicious-module fingerprint",
-            level = TeeSignalLevel.FAIL,
-        ),
-        PRIVATE_BINDER_EXCEPTION(
-            summary = "Captured private binder exception during timing skip.",
-            rowLabel = "Captured private binder exception during timing skip",
-            level = TeeSignalLevel.WARN,
-        ),
     }
 
     fun reduce(artifacts: TeeScanArtifacts): TeeReport {
         val patchState = buildPatchState(artifacts)
         val policyHardIndicators = collectPolicyHardIndicators(artifacts)
         val policySoftIndicators = collectPolicySoftIndicators(artifacts, patchState)
-        val supplementaryIndicators = collectSupplementaryIndicators(artifacts)
+        val supplementaryIndicators = localSignals(artifacts)
         val effectiveTier = effectiveTier(artifacts)
         val verdict = determineVerdict(artifacts, policyHardIndicators, policySoftIndicators)
         val supplementaryDangerCount =
@@ -243,7 +213,7 @@ class TeeReportReducer(
         }
     }
 
-    private fun collectSupplementaryIndicators(artifacts: TeeScanArtifacts): List<TeeEvidenceItem> {
+    private fun localSignals(artifacts: TeeScanArtifacts): List<TeeEvidenceItem> {
         return buildList {
             if (artifacts.soter.abnormalEnvironment) {
                 add(
@@ -254,29 +224,7 @@ class TeeReportReducer(
                     )
                 )
             }
-            val timingSideChannelSkipSignature = timingSideChannelSkipSignature(artifacts.timingSideChannel)
-            if (timingSideChannelSkipSignature != null) {
-                add(
-                    fact(
-                        "Timing side-channel",
-                        timingSideChannelSkipSignature.summary,
-                        timingSideChannelSkipSignature.level,
-                    )
-                )
-            } else if (
-                artifacts.timingSideChannel.measurementAvailable &&
-                artifacts.timingSideChannel.ratioEligible &&
-                artifacts.timingSideChannel.suspicious
-            ) {
-                add(
-                    fact(
-                        "Timing side-channel",
-                        timingSideChannelSummary(artifacts),
-                        TeeSignalLevel.WARN,
-                    )
-                )
-            }
-            if (generateModeAnomalyState(artifacts) == GenerateModeAnomalyState.MATCHED) {
+            if (genMode(artifacts) == GenState.MATCHED) {
                 add(
                     fact(
                         "TEE Simulator generate-mode fingerprint",
@@ -883,7 +831,7 @@ class TeeReportReducer(
                     ),
                 ),
             )
-            if (generateModeAnomalyState(artifacts) == GenerateModeAnomalyState.MATCHED) {
+            if (genMode(artifacts) == GenState.MATCHED) {
                 add(TeeSignal("TEE Simulator generate-mode fingerprint", "Matched", TeeSignalLevel.FAIL))
             }
             add(TeeSignal("CRL", crlSignalValue(artifacts), crlSignalLevel(artifacts)))
@@ -1040,21 +988,6 @@ class TeeReportReducer(
                             keyMintCryptoValue(artifacts),
                             keyMintCryptoLevel(artifacts),
                             hiddenCopyText = keyMintCryptoDiagnosticCopyText(artifacts),
-                        )
-                    )
-                    add(
-                        fact(
-                            "Timing",
-                            timingValue(artifacts),
-                            if (artifacts.timing.suspicious) TeeSignalLevel.WARN else TeeSignalLevel.INFO
-                        )
-                    )
-                    add(
-                        fact(
-                            "Timing side-channel",
-                            timingSideChannelValue(artifacts),
-                            timingSideChannelLevel(artifacts),
-                            hiddenCopyText = artifacts.timingSideChannel.stackCopyPayload,
                         )
                     )
                     add(
@@ -1818,91 +1751,6 @@ class TeeReportReducer(
         val detail: String,
     )
 
-    private fun timingValue(artifacts: TeeScanArtifacts): String {
-        val median = artifacts.timing.medianMicros?.let { "${it}us" } ?: "n/a"
-        return if (artifacts.timing.suspicious) {
-            "Fast/steady • $median"
-        } else {
-            "Median $median"
-        }
-    }
-
-    private fun timingSideChannelValue(artifacts: TeeScanArtifacts): String {
-        val result = artifacts.timingSideChannel
-        val skipSignature = timingSideChannelSkipSignature(result)
-        val timerSource = timingSideChannelTimerSourceLabel(result.timerSource, result.detail)
-        val thresholdRatio = String.format(Locale.US, "%.1fx", TIMING_SIDE_CHANNEL_THRESHOLD_RATIO)
-        val ratio = timingSideChannelRatio(result.avgAttestedMillis, result.avgNonAttestedMillis)
-        val ratioLabel = when {
-            result.measurementAvailable && !result.ratioEligible -> "skipped"
-            else -> ratio?.let { String.format(Locale.US, "%.3fx", it) } ?: "n/a"
-        }
-        val affinity = when {
-            result.affinity.isBlank() || result.affinity == "unknown" -> "affinity unknown"
-            else -> result.affinity
-        }
-        if (skipSignature != null) {
-            // skip 命中 patch signature 时，row 文案直接切到 patch-mode，可视层不再展示“measurement unavailable”这种弱语义。
-            // When skip hits a patch signature, switch the row text directly to patch-mode wording instead of weaker "measurement unavailable" phrasing.
-            return listOf(skipSignature.rowLabel, timerSource, affinity)
-                .filter { it.isNotBlank() }
-                .joinToString(separator = " • ")
-        }
-        val avgAttested = result.avgAttestedMillis?.let { String.format(Locale.US, "%.3fms", it) } ?: "n/a"
-        val avgNonAttested = result.avgNonAttestedMillis?.let { String.format(Locale.US, "%.3fms", it) } ?: "n/a"
-        val diff = result.diffMillis?.let { String.format(Locale.US, "%.3fms", it) } ?: "n/a"
-        val state = when {
-            !result.probeRan -> "Skipped"
-            !result.measurementAvailable -> "Measurement unavailable"
-            !result.ratioEligible -> "Ratio skipped"
-            result.suspicious -> "Positive"
-            else -> "Not positive"
-        }
-        val attemptedPairs = result.attemptedPairCount.takeIf { it > 0 } ?: result.sampleCount
-        val successfulPairs = result.successfulPairCount.takeIf { it > 0 } ?: result.sampleCount
-        val failedPairs = " • failedPairs=${result.failedPairCount}/$attemptedPairs"
-        val outlierFiltered = " • outlierFiltered=${result.filteredOutlierCount}/$successfulPairs"
-        val samples = " • samples=${result.sampleCount}"
-        val ratioSkip = result.ratioSkipReason?.takeIf { it.isNotBlank() }?.let { " • $it" }.orEmpty()
-        val reason = result.failureReason?.takeIf { it.isNotBlank() }?.let { " • reason $it" }.orEmpty()
-        return "$timerSource • $affinity • attested $avgAttested • non-attested $avgNonAttested • diff $diff • ratio $ratioLabel • threshold > $thresholdRatio$failedPairs$outlierFiltered$samples$ratioSkip • $state$reason"
-    }
-
-    private fun timingSideChannelSummary(artifacts: TeeScanArtifacts): String {
-        val result = artifacts.timingSideChannel
-        timingSideChannelSkipSignature(result)?.let { return it.summary }
-        val timerSource = timingSideChannelTimerSourceLabel(result.timerSource, result.detail)
-        val thresholdRatio = String.format(Locale.US, "%.1fx", TIMING_SIDE_CHANNEL_THRESHOLD_RATIO)
-        if (!result.measurementAvailable) {
-            return "$timerSource timing side-channel could not finish measurement; ${result.failureReason ?: "reason unavailable"}."
-        }
-        if (!result.ratioEligible) {
-            return "$timerSource timing side-channel skipped ratio; ${result.ratioSkipReason ?: "insufficientSamples=${result.sampleCount}/$MIN_RATIO_SAMPLE_COUNT"}."
-        }
-        val ratio = timingSideChannelRatio(result.avgAttestedMillis, result.avgNonAttestedMillis)
-        val thresholdDirection = ratio?.let { value ->
-            val ratioText = String.format(Locale.US, "%.2fx", value)
-            if (value > TIMING_SIDE_CHANNEL_THRESHOLD_RATIO) {
-                "ratio $ratioText exceeded $thresholdRatio"
-            } else {
-                "ratio $ratioText stayed within $thresholdRatio"
-            }
-        } ?: "ratio unavailable"
-        return "$timerSource timing side-channel stayed supplementary; $thresholdDirection."
-    }
-
-    private fun timingSideChannelTimerSourceLabel(timerSource: String, detail: String): String {
-        val normalized = timerSource.lowercase(Locale.US)
-        val lowered = detail.lowercase(Locale.US)
-        return when {
-            "cntvct" in normalized || "register" in normalized -> "Register timer"
-            "monotonic" in normalized || "nano" in normalized -> "Fallback timer"
-            "register" in lowered -> "Register timer"
-            "fallback" in lowered -> "Fallback timer"
-            else -> "Timer source unspecified"
-        }
-    }
-
     private fun keyboxValue(artifacts: TeeScanArtifacts): String {
         return when {
             !artifacts.keyboxImport.executed -> "Skipped"
@@ -1935,14 +1783,14 @@ class TeeReportReducer(
     }
 
     private fun generateModeAnomalyValue(artifacts: TeeScanArtifacts): String {
-        return when (generateModeAnomalyState(artifacts)) {
-            GenerateModeAnomalyState.MATCHED ->
+        return when (genMode(artifacts)) {
+            GenState.MATCHED ->
                 "Matched TEE Simulator generate-mode fingerprint."
 
-            GenerateModeAnomalyState.CLEAN ->
+            GenState.CLEAN ->
                 "No TEE Simulator generate-mode fingerprint observed."
 
-            GenerateModeAnomalyState.UNAVAILABLE -> "TEE Simulator generate-mode fingerprint probe unavailable."
+            GenState.UNAVAILABLE -> "TEE Simulator generate-mode fingerprint probe unavailable."
         }
     }
 
@@ -2819,98 +2667,11 @@ class TeeReportReducer(
     }
 
     private fun generateModeAnomalyLevel(artifacts: TeeScanArtifacts): TeeSignalLevel = when (
-        generateModeAnomalyState(artifacts)
+        genMode(artifacts)
     ) {
-        GenerateModeAnomalyState.MATCHED -> TeeSignalLevel.FAIL
-        GenerateModeAnomalyState.CLEAN -> TeeSignalLevel.PASS
-        GenerateModeAnomalyState.UNAVAILABLE -> TeeSignalLevel.INFO
-    }
-
-    private fun timingSideChannelLevel(artifacts: TeeScanArtifacts): TeeSignalLevel {
-        val skipSignature = timingSideChannelSkipSignature(artifacts.timingSideChannel)
-        return when {
-            skipSignature != null -> skipSignature.level
-            !artifacts.timingSideChannel.probeRan -> TeeSignalLevel.INFO
-            !artifacts.timingSideChannel.measurementAvailable -> TeeSignalLevel.INFO
-            !artifacts.timingSideChannel.ratioEligible -> TeeSignalLevel.INFO
-            artifacts.timingSideChannel.suspicious -> TeeSignalLevel.WARN
-            else -> TeeSignalLevel.INFO
-        }
-    }
-
-    private fun timingSideChannelSkipSignature(
-        result: TimingSideChannelResult,
-    ): TimingSideChannelSkipSignature? {
-        // 这里只识别 skip 场景：一旦 measurementAvailable=true，说明 timing probe 已经进入样本比较语义，不能再被静态栈特征改写成 patch-mode。
-        // Only recognize skip scenarios here: once measurementAvailable=true, the probe is already in sample-comparison semantics and static stacks must not rewrite it into patch-mode.
-        if (result.measurementAvailable) {
-            return null
-        }
-        val payload = result.stackCopyPayload
-            .replace("\r\n", "\n")
-            .takeIf { it.isNotBlank() && it != "null" }
-            ?: return null
-        return when {
-            // TEE Simulator 家族目前有两套稳定静态签名：
-            // 1) tees-rs 样例里的 generateKey + deleteKey 组合；2) tees 样例里的 code -75 + legacy-db 组合。
-            // timing 行仍然沿用 patch-mode 文案，生成模式结论则在 generateModeAnomalyState 里复用第二套组合。
-            // The TEE Simulator family currently has two stable static signatures:
-            // 1) the generateKey + deleteKey combination from the tees-rs sample; 2) the code -75 + legacy-db combination from the tees sample.
-            // The timing row keeps the patch-mode wording, while generate-mode matching reuses the second combination in generateModeAnomalyState.
-            payload.containsAllNeedles(
-                listOf(
-                    "android.os.ServiceSpecificException (code -49)",
-                    "at android.os.Parcel.createExceptionOrNull",
-                    "at android.os.Parcel.createException",
-                    "at ${'$'}Proxy7.generateKey(Unknown Source)",
-                    "Caused by:",
-                    "0: Legacy database is empty.",
-                    "1: Error::Rc(r#KEY_NOT_FOUND) (code 7)",
-                    "at ${'$'}Proxy5.deleteKey(Unknown Source)",
-                ),
-            ) || payload.matchesTeeSimulatorLegacyDbSignature() -> TimingSideChannelSkipSignature.TEE_SIMULATOR_PATCH_MODE
-
-            // 组合命中 ts 样例里的 getKeyEntry 失败栈后，再提升为 Tricky-Store Patch Mode。
-            // Elevate to Tricky-Store Patch Mode only after the full getKeyEntry failure combination from the ts sample is present.
-            payload.containsAllNeedles(
-                listOf(
-                    "Caused by: android.os.ServiceSpecificException (code 7)",
-                    "at android.os.Parcel.createException",
-                    "at android.os.Parcel.readException",
-                    "at ${'$'}Proxy5.getKeyEntry(Unknown Source)",
-                ),
-            ) -> TimingSideChannelSkipSignature.TRICKY_STORE_PATCH_MODE
-
-            // 如果所有更具体的 patch/generate 组合都没有命中，但仍然看到 Parcel 三连异常，就保留一个 warning 级别的私有 binder 兜底信号。
-            // If no more specific patch/generate signature matches, keep a warning-level private-binder fallback when the Parcel exception trio is still present.
-            payload.containsAllNeedles(
-                listOf(
-                    "at android.os.Parcel.createExceptionOrNull",
-                    "at android.os.Parcel.createException",
-                    "at android.os.Parcel.readException",
-                ),
-            ) -> TimingSideChannelSkipSignature.PRIVATE_BINDER_EXCEPTION
-
-            else -> null
-        }
-    }
-
-    private fun String.containsAllNeedles(needles: List<String>): Boolean {
-        return needles.all { contains(it) }
-    }
-
-    private fun String.matchesTeeSimulatorLegacyDbSignature(): Boolean {
-        return containsAllNeedles(
-            listOf(
-                "android.os.ServiceSpecificException (code -75)",
-                "at android.os.Parcel.createExceptionOrNull",
-                "at android.os.Parcel.createException",
-                "at android.os.Parcel.readException",
-                "Caused by:",
-                "0: Legacy database is empty.",
-                "1: Error::Rc(r#KEY_NOT_FOUND) (code 7)",
-            ),
-        )
+        GenState.MATCHED -> TeeSignalLevel.FAIL
+        GenState.CLEAN -> TeeSignalLevel.PASS
+        GenState.UNAVAILABLE -> TeeSignalLevel.INFO
     }
 
     private fun strongBoxLevel(artifacts: TeeScanArtifacts): TeeSignalLevel = when {
@@ -3066,18 +2827,12 @@ class TeeReportReducer(
         return "${input.take(12)}..."
     }
 
-    private fun generateModeAnomalyState(artifacts: TeeScanArtifacts): GenerateModeAnomalyState {
+    private fun genMode(artifacts: TeeScanArtifacts): GenState {
         val result = artifacts.generateModeParcelFingerprint
-        val timingPayload = artifacts.timingSideChannel.stackCopyPayload
-            .replace("\r\n", "\n")
-            .takeIf { it.isNotBlank() && it != "null" }
         return when {
-            result.matched -> GenerateModeAnomalyState.MATCHED
-            // tees 样例里的 code -75 + legacy-db 组合落在 timing skip payload 里时，语义上也属于 TEE Simulator 生成链路命中。
-            // When the tees code -75 + legacy-db combination lands in a timing skip payload, it also counts as a TEE Simulator generate-path hit.
-            timingPayload?.matchesTeeSimulatorLegacyDbSignature() == true -> GenerateModeAnomalyState.MATCHED
-            result.available -> GenerateModeAnomalyState.CLEAN
-            else -> GenerateModeAnomalyState.UNAVAILABLE
+            result.matched -> GenState.MATCHED
+            result.available -> GenState.CLEAN
+            else -> GenState.UNAVAILABLE
         }
     }
 
