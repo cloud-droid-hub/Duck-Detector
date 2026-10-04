@@ -58,7 +58,7 @@ import com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyboxI
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyboxImportResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2GenerateModeParcelFingerprintResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2HookResult
-import com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2PostProcessingResult
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.CertPathResult
 import com.eltavine.duckdetector.features.tee.data.verification.rkp.RkpProvisionedManufacturerResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.LegacyKeystorePathResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.ListEntriesBatchedResult
@@ -1882,7 +1882,7 @@ class TeeReducerTest {
             executed = false,
             detail = "skipped",
         ),
-        postProcessing: Keystore2PostProcessingResult = Keystore2PostProcessingResult(
+        postProcessing: CertPathResult = CertPathResult(
             probeRan = false,
             detail = "skipped",
         ),

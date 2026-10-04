@@ -38,7 +38,7 @@ import com.eltavine.duckdetector.features.tee.data.verification.keystore.Synthet
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.GrantSelfDomainAnomalyKind
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.SupplementaryAttestationInfoAnomalyKind
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.UpdateSubcomponentStaleResponseAnomalyKind
-import com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2PostProcessingAnomalyKind
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.CertPathKind
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.VintfKeyMintVersionAnomalyKind
 import com.eltavine.duckdetector.features.tee.data.verification.rkp.RkpProvisionedManufacturerAnomalyKind
 import java.time.LocalDate
@@ -256,21 +256,11 @@ class TeeReportReducer(
                     )
                 )
             }
-            // ATTEST_KEY 路径在 security_level.rs 里没有后处理调用点，所以这两类都是强本地证据：
-            // RootOfTrust 在两条分支间分叉，或 RKP 路径的单侧延迟显著超过本机噪声
-            // The ATTEST_KEY path has no post-processing call site in security_level.rs, so both of these are strong
-            // local evidence: RootOfTrust forking between the arms, or one-sided RKP-path latency well above this
-            // device's own noise.
-            if (
-                artifacts.postProcessing.anomalyKind ==
-                    Keystore2PostProcessingAnomalyKind.ROOT_OF_TRUST_DIVERGENCE ||
-                artifacts.postProcessing.anomalyKind ==
-                    Keystore2PostProcessingAnomalyKind.TIMING_DETECTED
-            ) {
+            if (artifacts.postProcessing.kind == CertPathKind.ROOT_DIFF) {
                 add(
                     fact(
                         "Cert post-processing",
-                        postProcessingValue(artifacts),
+                        postValue(artifacts),
                         TeeSignalLevel.FAIL,
                     )
                 )
@@ -1028,8 +1018,8 @@ class TeeReportReducer(
                     add(
                         fact(
                             "Cert post-processing",
-                            postProcessingValue(artifacts),
-                            postProcessingLevel(artifacts),
+                            postValue(artifacts),
+                            postLevel(artifacts),
                         )
                     )
                     add(
@@ -2743,36 +2733,29 @@ class TeeReportReducer(
         }
     }
 
-    private fun postProcessingLevel(artifacts: TeeScanArtifacts): TeeSignalLevel = when (
-        artifacts.postProcessing.anomalyKind
+    private fun postLevel(artifacts: TeeScanArtifacts): TeeSignalLevel = when (
+        artifacts.postProcessing.kind
     ) {
-        Keystore2PostProcessingAnomalyKind.ROOT_OF_TRUST_DIVERGENCE,
-        Keystore2PostProcessingAnomalyKind.TIMING_DETECTED -> TeeSignalLevel.FAIL
-        Keystore2PostProcessingAnomalyKind.TIMING_SUSPECT -> TeeSignalLevel.WARN
-        Keystore2PostProcessingAnomalyKind.NONE -> TeeSignalLevel.PASS
-        // 这三种都是"测不了"，不能当成通过 / These three all mean "could not test" and must not read as a pass
-        Keystore2PostProcessingAnomalyKind.RKP_UNAVAILABLE,
-        Keystore2PostProcessingAnomalyKind.RKP_FALLBACK_INCONCLUSIVE,
-        Keystore2PostProcessingAnomalyKind.UNMEASURABLE -> TeeSignalLevel.INFO
+        CertPathKind.ROOT_DIFF -> TeeSignalLevel.FAIL
+        CertPathKind.NONE -> TeeSignalLevel.PASS
+        CertPathKind.RKP_FAILURE,
+        CertPathKind.NO_RKP,
+        CertPathKind.UNAVAILABLE -> TeeSignalLevel.INFO
     }
 
-    private fun postProcessingValue(artifacts: TeeScanArtifacts): String {
+    private fun postValue(artifacts: TeeScanArtifacts): String {
         val result = artifacts.postProcessing
-        return when (result.anomalyKind) {
-            Keystore2PostProcessingAnomalyKind.ROOT_OF_TRUST_DIVERGENCE ->
-                "RootOfTrust differed between the RKP and ATTEST_KEY paths, which only certificate post-processing explains. ${result.detail}"
-            Keystore2PostProcessingAnomalyKind.TIMING_DETECTED ->
-                "The RKP path cost significantly more than the ATTEST_KEY path, matching certificate post-processing. ${result.detail}"
-            Keystore2PostProcessingAnomalyKind.TIMING_SUSPECT ->
-                "The RKP path was slower than the ATTEST_KEY path, but not far enough above this device's own noise to call. ${result.detail}"
-            Keystore2PostProcessingAnomalyKind.NONE ->
-                "The RKP and ATTEST_KEY paths agreed, showing no sign of certificate post-processing. ${result.detail}"
-            Keystore2PostProcessingAnomalyKind.RKP_UNAVAILABLE ->
+        return when (result.kind) {
+            CertPathKind.ROOT_DIFF ->
+                "RootOfTrust differed between the RKP and ATTEST_KEY certificate paths. ${result.detail}"
+            CertPathKind.NONE ->
+                "The RKP and ATTEST_KEY certificate RootOfTrust fields agreed. ${result.detail}"
+            CertPathKind.RKP_FAILURE ->
                 "RKP key acquisition hard-failed, so the post-processing path could not be reached or tested. ${result.detail}"
-            Keystore2PostProcessingAnomalyKind.RKP_FALLBACK_INCONCLUSIVE ->
+            CertPathKind.NO_RKP ->
                 "The factory key was used instead of an RKP key, so the post-processing path was never traversed and this is untested rather than clean. ${result.detail}"
-            Keystore2PostProcessingAnomalyKind.UNMEASURABLE ->
-                "Not enough paired samples were collected to judge certificate post-processing. ${result.detail}"
+            CertPathKind.UNAVAILABLE ->
+                "Certificate fields needed for the RKP and ATTEST_KEY comparison were unavailable. ${result.detail}"
         }
     }
 

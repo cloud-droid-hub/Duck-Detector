@@ -33,7 +33,7 @@ import com.eltavine.duckdetector.features.tee.data.verification.keystore.ImportK
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyboxImportResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2GenerateModeParcelFingerprintResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2HookResult
-import com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2PostProcessingResult
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.CertPathResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyLifecycleResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyMintCapabilityResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.GrantDomainFullChainSplitResult
@@ -77,7 +77,7 @@ data class TeeScanArtifacts(
     val vintfKeyMintVersion: VintfKeyMintVersionResult,
     val keystore2Hook: Keystore2HookResult,
     val generateModeParcelFingerprint: Keystore2GenerateModeParcelFingerprintResult,
-    val postProcessing: Keystore2PostProcessingResult,
+    val postProcessing: CertPathResult,
     val rkpProvisionedManufacturer: RkpProvisionedManufacturerResult,
     val grantDomainFullChainSplit: GrantDomainFullChainSplitResult,
     val syntheticGrantGranteeBlindReadback: SyntheticGrantGranteeBlindReadbackResult,
