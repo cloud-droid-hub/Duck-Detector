@@ -182,174 +182,170 @@ private fun AppReadyShell(
 ) {
     val context = LocalContext.current
     val appContext = context.applicationContext
-    val updateOpenFailedMessage = stringResource(R.string.update_open_failed)
+    val updateError = stringResource(R.string.update_open_failed)
     val scope = rememberCoroutineScope()
-    var isResolvingUpdateDownload by remember { mutableStateOf(false) }
+    var resolvingUpdate by remember { mutableStateOf(false) }
     val notifier = remember(appContext) { ScanProgressNotifier(appContext) }
     val updateFactory = remember(context) { UpdateViewModel.factory(context) }
-    val bootloaderFactory = remember(context) { BootloaderViewModel.factory(context) }
+    val bootFactory = remember(context) { BootloaderViewModel.factory(context) }
     val teeFactory = remember(context) { TeeViewModel.factory(context) }
     val customRomFactory = remember(context) { CustomRomViewModel.factory(context) }
-    val dangerousAppsFactory = remember(context) { DangerousAppsViewModel.factory(context) }
-    val deviceInfoFactory = remember(context) { DeviceInfoViewModel.factory(context) }
-    val kernelCheckFactory = remember { KernelCheckViewModel.factory() }
+    val appsFactory = remember(context) { DangerousAppsViewModel.factory(context) }
+    val infoFactory = remember(context) { DeviceInfoViewModel.factory(context) }
+    val kernelFactory = remember { KernelCheckViewModel.factory() }
     val lsposedFactory = remember(context) { LSPosedViewModel.factory(context) }
     val memoryFactory = remember { MemoryViewModel.factory() }
     val mountFactory = remember(context) { MountViewModel.factory(context) }
-    val nativeRootFactory = remember(context) { NativeRootViewModel.factory(context) }
-    val playIntegrityFixFactory = remember { PlayIntegrityFixViewModel.factory() }
+    val rootFactory = remember(context) { NativeRootViewModel.factory(context) }
+    val playFactory = remember { PlayIntegrityFixViewModel.factory() }
     val selinuxFactory = remember(context) { SelinuxViewModel.factory(context) }
     val suFactory = remember { SuViewModel.factory() }
-    val systemPropertiesFactory = remember { SystemPropertiesViewModel.factory() }
-    val virtualizationFactory = remember(context) { VirtualizationViewModel.factory(context) }
+    val propsFactory = remember { SystemPropertiesViewModel.factory() }
+    val virtFactory = remember(context) { VirtualizationViewModel.factory(context) }
     val zygiskFactory = remember(context) { ZygiskViewModel.factory(context) }
     val updateViewModel: UpdateViewModel = viewModel(factory = updateFactory)
-    val bootloaderViewModel: BootloaderViewModel = viewModel(factory = bootloaderFactory)
+    val bootVm: BootloaderViewModel = viewModel(factory = bootFactory)
     val teeViewModel: TeeViewModel = viewModel(factory = teeFactory)
-    val customRomViewModel: CustomRomViewModel = viewModel(factory = customRomFactory)
-    val dangerousAppsViewModel: DangerousAppsViewModel = viewModel(factory = dangerousAppsFactory)
-    val deviceInfoViewModel: DeviceInfoViewModel = viewModel(factory = deviceInfoFactory)
-    val kernelCheckViewModel: KernelCheckViewModel = viewModel(factory = kernelCheckFactory)
+    val customRomVm: CustomRomViewModel = viewModel(factory = customRomFactory)
+    val appsVm: DangerousAppsViewModel = viewModel(factory = appsFactory)
+    val infoVm: DeviceInfoViewModel = viewModel(factory = infoFactory)
+    val kernelVm: KernelCheckViewModel = viewModel(factory = kernelFactory)
     val lsposedViewModel: LSPosedViewModel = viewModel(factory = lsposedFactory)
     val memoryViewModel: MemoryViewModel = viewModel(factory = memoryFactory)
     val mountViewModel: MountViewModel = viewModel(factory = mountFactory)
-    val nativeRootViewModel: NativeRootViewModel = viewModel(factory = nativeRootFactory)
-    val playIntegrityFixViewModel: PlayIntegrityFixViewModel =
-        viewModel(factory = playIntegrityFixFactory)
+    val rootVm: NativeRootViewModel = viewModel(factory = rootFactory)
+    val playVm: PlayIntegrityFixViewModel = viewModel(factory = playFactory)
     val selinuxViewModel: SelinuxViewModel = viewModel(factory = selinuxFactory)
     val suViewModel: SuViewModel = viewModel(factory = suFactory)
-    val systemPropertiesViewModel: SystemPropertiesViewModel =
-        viewModel(factory = systemPropertiesFactory)
-    val virtualizationViewModel: VirtualizationViewModel =
-        viewModel(factory = virtualizationFactory)
+    val propsVm: SystemPropertiesViewModel = viewModel(factory = propsFactory)
+    val virtVm: VirtualizationViewModel = viewModel(factory = virtFactory)
     val zygiskViewModel: ZygiskViewModel = viewModel(factory = zygiskFactory)
     val teeUiState by teeViewModel.uiState.collectAsState()
-    val customRomUiState by customRomViewModel.uiState.collectAsState()
-    val dangerousAppsUiState by dangerousAppsViewModel.uiState.collectAsState()
-    val deviceInfoUiState by deviceInfoViewModel.uiState.collectAsState()
-    val kernelCheckUiState by kernelCheckViewModel.uiState.collectAsState()
+    val customRomUiState by customRomVm.uiState.collectAsState()
+    val appsUiState by appsVm.uiState.collectAsState()
+    val infoUiState by infoVm.uiState.collectAsState()
+    val kernelUiState by kernelVm.uiState.collectAsState()
     val lsposedUiState by lsposedViewModel.uiState.collectAsState()
     val memoryUiState by memoryViewModel.uiState.collectAsState()
     val mountUiState by mountViewModel.uiState.collectAsState()
-    val nativeRootUiState by nativeRootViewModel.uiState.collectAsState()
-    val playIntegrityFixUiState by playIntegrityFixViewModel.uiState.collectAsState()
+    val rootUiState by rootVm.uiState.collectAsState()
+    val playUiState by playVm.uiState.collectAsState()
     val selinuxUiState by selinuxViewModel.uiState.collectAsState()
     val suUiState by suViewModel.uiState.collectAsState()
-    val systemPropertiesUiState by systemPropertiesViewModel.uiState.collectAsState()
-    val virtualizationUiState by virtualizationViewModel.uiState.collectAsState()
+    val propsUiState by propsVm.uiState.collectAsState()
+    val virtUiState by virtVm.uiState.collectAsState()
     val zygiskUiState by zygiskViewModel.uiState.collectAsState()
-    val bootloaderUiState by bootloaderViewModel.uiState.collectAsState()
+    val bootUiState by bootVm.uiState.collectAsState()
     val updateUiState by updateViewModel.uiState.collectAsState()
 
     val contributions = remember(
-        bootloaderUiState,
+        bootUiState,
         teeUiState,
         customRomUiState,
-        dangerousAppsUiState,
-        deviceInfoUiState,
-        kernelCheckUiState,
+        appsUiState,
+        infoUiState,
+        kernelUiState,
         lsposedUiState,
         memoryUiState,
         mountUiState,
-        nativeRootUiState,
-        playIntegrityFixUiState,
+        rootUiState,
+        playUiState,
         selinuxUiState,
         suUiState,
-        systemPropertiesUiState,
-        virtualizationUiState,
+        propsUiState,
+        virtUiState,
         zygiskUiState,
     ) {
         listOf(
-            buildBootloaderContribution(bootloaderUiState),
+            buildBootloaderContribution(bootUiState),
             buildCustomRomContribution(customRomUiState),
-            buildDangerousAppsContribution(dangerousAppsUiState),
-            buildKernelCheckContribution(kernelCheckUiState),
+            buildDangerousAppsContribution(appsUiState),
+            buildKernelCheckContribution(kernelUiState),
             buildLsposedContribution(lsposedUiState),
             buildMemoryContribution(memoryUiState),
             buildMountContribution(mountUiState),
-            buildNativeRootContribution(nativeRootUiState),
-            buildPlayIntegrityFixContribution(playIntegrityFixUiState),
+            buildNativeRootContribution(rootUiState),
+            buildPlayIntegrityFixContribution(playUiState),
             buildSelinuxContribution(selinuxUiState),
             buildSuContribution(suUiState),
-            buildSystemPropertiesContribution(systemPropertiesUiState),
+            buildSystemPropertiesContribution(propsUiState),
             buildTeeContribution(teeUiState),
-            buildVirtualizationContribution(virtualizationUiState),
+            buildVirtualizationContribution(virtUiState),
             buildZygiskContribution(zygiskUiState),
         )
     }
-    val isDashboardLoading = contributions.any { !it.ready }
-    var dashboardScanStartedAt by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
-    var dashboardScanFinishedAt by remember { mutableStateOf<Long?>(null) }
-    var dashboardScanCompletedAtEpoch by remember { mutableStateOf<Long?>(null) }
+    val dashboardLoading = contributions.any { !it.ready }
+    var scanStartedAt by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+    var scanFinishedAt by remember { mutableStateOf<Long?>(null) }
+    var scanEpoch by remember { mutableStateOf<Long?>(null) }
 
-    LaunchedEffect(isDashboardLoading) {
-        if (isDashboardLoading) {
-            if (dashboardScanFinishedAt != null) {
-                dashboardScanStartedAt = SystemClock.elapsedRealtime()
-                dashboardScanFinishedAt = null
-                dashboardScanCompletedAtEpoch = null
+    LaunchedEffect(dashboardLoading) {
+        if (dashboardLoading) {
+            if (scanFinishedAt != null) {
+                scanStartedAt = SystemClock.elapsedRealtime()
+                scanFinishedAt = null
+                scanEpoch = null
             }
-        } else if (dashboardScanFinishedAt == null) {
-            dashboardScanFinishedAt = SystemClock.elapsedRealtime()
-            dashboardScanCompletedAtEpoch = System.currentTimeMillis()
+        } else if (scanFinishedAt == null) {
+            scanFinishedAt = SystemClock.elapsedRealtime()
+            scanEpoch = System.currentTimeMillis()
         }
     }
 
-    val dashboardScanDurationMillis = dashboardScanFinishedAt
-        ?.minus(dashboardScanStartedAt)
+    val scanDuration = scanFinishedAt
+        ?.minus(scanStartedAt)
         ?.coerceAtLeast(0L)
-    val dashboardScanCompletedAtEpochMillis = dashboardScanCompletedAtEpoch
 
     val dashboardState = remember(
         contributions,
-        dashboardScanDurationMillis,
-        dashboardScanCompletedAtEpochMillis,
-        isDashboardLoading,
-        deviceInfoUiState,
-        bootloaderUiState,
+        scanDuration,
+        scanEpoch,
+        dashboardLoading,
+        infoUiState,
+        bootUiState,
         teeUiState,
         customRomUiState,
-        dangerousAppsUiState,
-        kernelCheckUiState,
+        appsUiState,
+        kernelUiState,
         lsposedUiState,
         memoryUiState,
         mountUiState,
-        nativeRootUiState,
-        playIntegrityFixUiState,
+        rootUiState,
+        playUiState,
         selinuxUiState,
         suUiState,
-        systemPropertiesUiState,
-        virtualizationUiState,
+        propsUiState,
+        virtUiState,
         zygiskUiState,
     ) {
         DashboardUiState(
             overview = buildDashboardOverview(
                 contributions = contributions,
-                scanDurationMillis = dashboardScanDurationMillis,
-                scanCompletedAtEpochMillis = dashboardScanCompletedAtEpochMillis,
+                scanDurationMillis = scanDuration,
+                scanCompletedAtEpochMillis = scanEpoch,
             ),
             topFindings = buildDashboardFindings(contributions),
             detectorCards = sortDashboardDetectorCards(
                 listOf(
-                    DashboardDetectorCardEntry.Bootloader(bootloaderUiState.cardModel),
+                    DashboardDetectorCardEntry.Bootloader(bootUiState.cardModel),
                     DashboardDetectorCardEntry.CustomRom(customRomUiState.cardModel),
-                    DashboardDetectorCardEntry.DangerousApps(dangerousAppsUiState.cardModel),
-                    DashboardDetectorCardEntry.KernelCheck(kernelCheckUiState.cardModel),
+                    DashboardDetectorCardEntry.DangerousApps(appsUiState.cardModel),
+                    DashboardDetectorCardEntry.KernelCheck(kernelUiState.cardModel),
                     DashboardDetectorCardEntry.LSPosed(lsposedUiState.cardModel),
                     DashboardDetectorCardEntry.Memory(memoryUiState.cardModel),
                     DashboardDetectorCardEntry.Mount(mountUiState.cardModel),
-                    DashboardDetectorCardEntry.NativeRoot(nativeRootUiState.cardModel),
-                    DashboardDetectorCardEntry.PlayIntegrityFix(playIntegrityFixUiState.cardModel),
+                    DashboardDetectorCardEntry.NativeRoot(rootUiState.cardModel),
+                    DashboardDetectorCardEntry.PlayIntegrityFix(playUiState.cardModel),
                     DashboardDetectorCardEntry.Selinux(selinuxUiState.cardModel),
                     DashboardDetectorCardEntry.Su(suUiState.cardModel),
-                    DashboardDetectorCardEntry.SystemProperties(systemPropertiesUiState.cardModel),
+                    DashboardDetectorCardEntry.SystemProperties(propsUiState.cardModel),
                     DashboardDetectorCardEntry.Tee(teeUiState.cardModel),
-                    DashboardDetectorCardEntry.Virtualization(virtualizationUiState.cardModel),
+                    DashboardDetectorCardEntry.Virtualization(virtUiState.cardModel),
                     DashboardDetectorCardEntry.Zygisk(zygiskUiState.cardModel),
                 ),
             ),
-            deviceInfoCard = deviceInfoUiState.cardModel,
-            isLoading = isDashboardLoading,
+            deviceInfoCard = infoUiState.cardModel,
+            isLoading = dashboardLoading,
         )
     }
     val settingsState = remember(networkPrefs.consentGranted, updateUiState.status) {
@@ -367,28 +363,28 @@ private fun AppReadyShell(
     }
     var expandTitles by rememberSaveable { mutableStateOf(emptyList<String>()) }
 
-    LaunchedEffect(isDashboardLoading, attentionTitles) {
-        expandTitles = if (isDashboardLoading) emptyList() else attentionTitles.toList()
+    LaunchedEffect(dashboardLoading, attentionTitles) {
+        expandTitles = if (dashboardLoading) emptyList() else attentionTitles.toList()
     }
 
-    val notificationSnapshot = remember(
+    val notifySnapshot = remember(
         contributions.size,
         contributions.count { it.ready },
         dashboardState.overview,
-        isDashboardLoading,
+        dashboardLoading,
     ) {
         ScanProgressNotificationSnapshot(
             totalDetectorCount = contributions.size,
             readyDetectorCount = contributions.count { it.ready },
             dashboardOverview = dashboardState.overview,
-            scanning = isDashboardLoading,
+            scanning = dashboardLoading,
         )
     }
 
-    LaunchedEffect(notifyState, notificationSnapshot) {
+    LaunchedEffect(notifyState, notifySnapshot) {
         notifier.update(
             permissionState = notifyState,
-            snapshot = notificationSnapshot,
+            snapshot = notifySnapshot,
         )
     }
 
@@ -446,20 +442,20 @@ private fun AppReadyShell(
             NightlyUpdateDialog(
                 currentVersionName = BuildConfig.VERSION_NAME,
                 update = availableUpdate,
-                downloadEnabled = !isResolvingUpdateDownload,
+                downloadEnabled = !resolvingUpdate,
                 onDismiss = updateViewModel::dismissUpdate,
                 onViewChanges = {
                     if (!openExternalUri(context, availableUpdate.compareUrl)) {
                         Toast.makeText(
                             context,
-                            updateOpenFailedMessage,
+                            updateError,
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
                 },
                 onDownload = {
-                    if (!isResolvingUpdateDownload) {
-                        isResolvingUpdateDownload = true
+                    if (!resolvingUpdate) {
+                        resolvingUpdate = true
                         scope.launch {
                             try {
                                 when (val resolution = updateViewModel.resolveDownload()) {
@@ -469,7 +465,7 @@ private fun AppReadyShell(
                                         } else {
                                             Toast.makeText(
                                                 context,
-                                                updateOpenFailedMessage,
+                                                updateError,
                                                 Toast.LENGTH_SHORT,
                                             ).show()
                                         }
@@ -478,7 +474,7 @@ private fun AppReadyShell(
                                     UpdateDownloadResolution.Failed -> {
                                         Toast.makeText(
                                             context,
-                                            updateOpenFailedMessage,
+                                            updateError,
                                             Toast.LENGTH_SHORT,
                                         ).show()
                                     }
@@ -487,7 +483,7 @@ private fun AppReadyShell(
                                     UpdateDownloadResolution.Refreshed -> Unit
                                 }
                             } finally {
-                                isResolvingUpdateDownload = false
+                                resolvingUpdate = false
                             }
                         }
                     }

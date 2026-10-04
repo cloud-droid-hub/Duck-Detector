@@ -33,7 +33,7 @@ import com.eltavine.duckdetector.features.tee.data.verification.keystore.ImportK
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyboxImportResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2GenerateModeParcelFingerprintResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2HookResult
-import com.eltavine.duckdetector.features.tee.data.verification.keystore.CertPathResult
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2PostProcessingResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyLifecycleResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyMintCapabilityResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.GrantDomainFullChainSplitResult
@@ -52,6 +52,8 @@ import com.eltavine.duckdetector.features.tee.data.verification.keystore.Oversiz
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.PureCertificateResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.PureCertificateSecurityLevelResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.SupplementaryAttestationInfoResult
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingAnomalyResult
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingSideChannelResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.UpdateSubcomponentResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.UpdateSubcomponentStaleResponsePersistenceResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.VintfKeyMintVersionResult
@@ -70,6 +72,8 @@ data class TeeScanArtifacts(
     val aesGcm: AesGcmRoundTripResult,
     val lifecycle: KeyLifecycleResult,
     val keyMintCapability: KeyMintCapabilityResult,
+    val timing: TimingAnomalyResult,
+    val timingSideChannel: TimingSideChannelResult,
     val oversizedChallenge: OversizedChallengeResult,
     val keyboxImport: KeyboxImportResult,
     val importKeyRetainedAttestationNarrative: ImportKeyRetainedAttestationNarrativeResult,
@@ -77,7 +81,7 @@ data class TeeScanArtifacts(
     val vintfKeyMintVersion: VintfKeyMintVersionResult,
     val keystore2Hook: Keystore2HookResult,
     val generateModeParcelFingerprint: Keystore2GenerateModeParcelFingerprintResult,
-    val postProcessing: CertPathResult,
+    val postProcessing: Keystore2PostProcessingResult,
     val rkpProvisionedManufacturer: RkpProvisionedManufacturerResult,
     val grantDomainFullChainSplit: GrantDomainFullChainSplitResult,
     val syntheticGrantGranteeBlindReadback: SyntheticGrantGranteeBlindReadbackResult,

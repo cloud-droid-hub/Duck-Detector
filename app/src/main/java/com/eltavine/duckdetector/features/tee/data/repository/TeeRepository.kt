@@ -65,10 +65,12 @@ import com.eltavine.duckdetector.features.tee.data.verification.keystore.Oversiz
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.PureCertificateProbe
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.PureCertificateSecurityLevelProbe
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.SupplementaryAttestationInfoProbe
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingAnomalyProbe
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingSideChannelProbe
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.UpdateSubcomponentProbe
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.UpdateSubcomponentStaleResponsePersistenceProbe
-import com.eltavine.duckdetector.features.tee.data.verification.keystore.CertPathProbe
-import com.eltavine.duckdetector.features.tee.data.verification.keystore.CertPathResult
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2PostProcessingProbe
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2PostProcessingResult
 import com.eltavine.duckdetector.features.tee.data.verification.rkp.RkpProvisionedManufacturerProbe
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.VintfKeyMintVersionProbe
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.VintfKeyMintVersionFamily
@@ -101,6 +103,8 @@ class TeeRepository(
     private val aesGcmProbe = AesGcmRoundTripProbe()
     private val lifecycleProbe = KeyLifecycleProbe()
     private val keyMintCapabilityProbe = KeyMintCapabilityProbe()
+    private val timingProbe = TimingAnomalyProbe()
+    private val timingSideChannelProbe = TimingSideChannelProbe()
     private val oversizedChallengeProbe = OversizedChallengeProbe()
     private val keyboxImportProbe = KeyboxImportProbe(appContext)
     private val importKeyRetainedAttestationNarrativeProbe =
@@ -132,7 +136,7 @@ class TeeRepository(
     private val idAttestationProbe = IdAttestationProbe()
     private val supplementaryAttestationInfoProbe = SupplementaryAttestationInfoProbe(appContext)
     private val vintfKeyMintVersionProbe = VintfKeyMintVersionProbe()
-    private val certProbe = CertPathProbe()
+    private val postProcessingProbe = Keystore2PostProcessingProbe()
     private val rkpProvisionedManufacturerProbe = RkpProvisionedManufacturerProbe()
     private val strongBoxProbe = StrongBoxBehaviorProbeSuite(appContext, collector)
     private val soterProbe = SoterCapabilityProbe(appContext)
@@ -154,34 +158,40 @@ class TeeRepository(
             val bootConsistency = bootConsistencyProbe.inspect(snapshot)
             val supplementaryAttestationInfo = supplementaryAttestationInfoProbe.inspect(snapshot)
             val vintfKeyMintVersion = vintfKeyMintVersionProbe.inspect(snapshot)
-            // Compare certificate fields from the RKP and ATTEST_KEY paths on hardware KeyMint.
+            // 这条探针要成对生成带 attestation 的 key，代价明显，因此只在硬件 KeyMint 层级下运行
+            // This probe generates attested keys pairwise and is visibly expensive, so it only runs on a hardware KeyMint tier.
             // keystore2 的 RkpdProvisioned 分支从 Android 15 起才有 process_certificate_chain 调用点
             // keystore2's RkpdProvisioned arm has no process_certificate_chain call site before Android 15
             val postProcessing = if (Build.VERSION.SDK_INT < 35) {
-                CertPathResult(
+                Keystore2PostProcessingResult(
                     probeRan = false,
                     detail = "Skipped because keystore2 has no certificate post-processing call site below Android 15.",
                 )
             } else if (snapshot.tier == TeeTier.TEE || snapshot.tier == TeeTier.STRONGBOX) {
                 runCatching {
-                    certProbe.inspect(useStrongBox = snapshot.tier == TeeTier.STRONGBOX)
+                    postProcessingProbe.inspect(useStrongBox = snapshot.tier == TeeTier.STRONGBOX)
                 }.getOrElse {
-                    CertPathResult(
+                    Keystore2PostProcessingResult(
                         probeRan = false,
                         detail = "Keystore2 post-processing probe failed to start: ${it.message ?: it::class.java.simpleName}",
                     )
                 }
             } else {
-                CertPathResult(
+                Keystore2PostProcessingResult(
                     probeRan = false,
                     detail = "Skipped because the device did not expose a hardware-backed KeyMint tier.",
                 )
             }
-            val deepChecks = deepScan(
+            val timingSideChannel = timingSideChannelProbe.inspect(
+                useStrongBox = false,
+                nativeSnapshot = native,
+            )
+            val deepChecks = collectDeepChecks(
                 useStrongBox = snapshot.tier == TeeTier.STRONGBOX,
-                deepAllowed = snapshot.tier == TeeTier.TEE || snapshot.tier == TeeTier.STRONGBOX,
+                deepChecksAllowed = snapshot.tier == TeeTier.TEE || snapshot.tier == TeeTier.STRONGBOX,
                 snapshot = snapshot,
-                kmVersion = vintfKeyMintVersion,
+                vintfKeyMintVersion = vintfKeyMintVersion,
+                timingSideChannel = timingSideChannel,
             )
 
 
@@ -196,6 +206,8 @@ class TeeRepository(
                     aesGcm = deepChecks.aesGcm,
                     lifecycle = deepChecks.lifecycle,
                     keyMintCapability = deepChecks.keyMintCapability,
+                    timing = deepChecks.timing,
+                    timingSideChannel = deepChecks.timingSideChannel,
                     oversizedChallenge = deepChecks.oversizedChallenge,
                     keyboxImport = deepChecks.keyboxImport,
                     importKeyRetainedAttestationNarrative = deepChecks.importKeyRetainedAttestationNarrative,
@@ -239,14 +251,15 @@ class TeeRepository(
         }
     }
 
-    private suspend fun deepScan(
+    private suspend fun collectDeepChecks(
         useStrongBox: Boolean,
-        deepAllowed: Boolean,
+        deepChecksAllowed: Boolean,
         snapshot: com.eltavine.duckdetector.features.tee.data.attestation.AttestationSnapshot,
-        kmVersion: VintfKeyMintVersionResult,
+        vintfKeyMintVersion: VintfKeyMintVersionResult,
+        timingSideChannel: com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingSideChannelResult,
     ): DeferredChecks = coroutineScope {
-        if (!deepAllowed) {
-            return@coroutineScope DeferredChecks.skipped(snapshot)
+        if (!deepChecksAllowed) {
+            return@coroutineScope DeferredChecks.skipped(snapshot, timingSideChannel)
         }
 
         val pairConsistency = async { pairConsistencyProbe.inspect(useStrongBox = useStrongBox) }
@@ -280,16 +293,16 @@ class TeeRepository(
             keyMintCapabilityProbe.inspect(
                 attestationVersion = snapshot.attestationVersion,
                 keymasterVersion = snapshot.keymasterVersion,
-                declaredKeyMintVersion = kmVersion.declarations
+                declaredKeyMintVersion = vintfKeyMintVersion.declarations
                     .filter {
                         it.family == VintfKeyMintVersionFamily.KEYMINT_AIDL &&
                             it.instance == if (useStrongBox) "strongbox" else "default"
                     }
                     .maxOfOrNull { it.expectedKeymasterVersion },
-                legacyKeymasterDeclared = !nativeKeyMintObserved && kmVersion.declarations.none {
+                legacyKeymasterDeclared = !nativeKeyMintObserved && vintfKeyMintVersion.declarations.none {
                     it.family == VintfKeyMintVersionFamily.KEYMINT_AIDL &&
                         it.instance == if (useStrongBox) "strongbox" else "default"
-                } && kmVersion.declarations.any {
+                } && vintfKeyMintVersion.declarations.any {
                     it.family == VintfKeyMintVersionFamily.KEYMASTER_HIDL &&
                         it.instance == if (useStrongBox) "strongbox" else "default"
                 },
@@ -298,6 +311,7 @@ class TeeRepository(
                 useStrongBox = useStrongBox,
             )
         }
+        val timing = async { timingProbe.inspect(useStrongBox = useStrongBox) }
         val oversizedChallenge = async { oversizedChallengeProbe.inspect(useStrongBox = useStrongBox) }
         val keyboxImport = async { keyboxImportProbe.inspect() }
         // Run after keybox import fixtures are available, but keep it independent so unsupported importKey paths degrade to INFO only.
@@ -326,6 +340,7 @@ class TeeRepository(
         val aesGcmResult = aesGcm.await()
         val lifecycleResult = lifecycle.await()
         val keyMintCapabilityResult = keyMintCapability.await()
+        val timingResult = timing.await()
         val oversizedChallengeResult = oversizedChallenge.await()
         val keyboxImportResult = keyboxImport.await()
         val importKeyRetainedAttestationNarrativeResult = importKeyRetainedAttestationNarrative.await()
@@ -377,6 +392,8 @@ class TeeRepository(
             aesGcm = aesGcmResult,
             lifecycle = lifecycleResult,
             keyMintCapability = keyMintCapabilityResult,
+            timing = timingResult,
+            timingSideChannel = timingSideChannel,
             oversizedChallenge = oversizedChallengeResult,
             keyboxImport = keyboxImportResult,
             importKeyRetainedAttestationNarrative = importKeyRetainedAttestationNarrativeResult,
@@ -466,6 +483,8 @@ private data class DeferredChecks(
     val aesGcm: com.eltavine.duckdetector.features.tee.data.verification.keystore.AesGcmRoundTripResult,
     val lifecycle: com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyLifecycleResult,
     val keyMintCapability: com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyMintCapabilityResult,
+    val timing: com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingAnomalyResult,
+    val timingSideChannel: com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingSideChannelResult,
     val oversizedChallenge: com.eltavine.duckdetector.features.tee.data.verification.keystore.OversizedChallengeResult,
     val keyboxImport: com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyboxImportResult,
     val importKeyRetainedAttestationNarrative: com.eltavine.duckdetector.features.tee.data.verification.keystore.ImportKeyRetainedAttestationNarrativeResult,
@@ -497,6 +516,7 @@ private data class DeferredChecks(
     companion object {
         fun skipped(
             snapshot: com.eltavine.duckdetector.features.tee.data.attestation.AttestationSnapshot,
+            timingSideChannel: com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingSideChannelResult,
         ) = DeferredChecks(
             pairConsistency = com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyPairConsistencyResult(
                 keyMatchesCertificate = true,
@@ -515,6 +535,11 @@ private data class DeferredChecks(
             keyMintCapability = com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyMintCapabilityResult(
                 executed = false,
             ),
+            timing = com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingAnomalyResult(
+                suspicious = false,
+                detail = "Timing probe skipped.",
+            ),
+            timingSideChannel = timingSideChannel,
 
             oversizedChallenge = com.eltavine.duckdetector.features.tee.data.verification.keystore.OversizedChallengeResult(
                 acceptedOversizedChallenge = false,

@@ -16,8 +16,6 @@
 
 package com.eltavine.duckdetector.features.tee.data.report
 
-// Copyright (c) 2025-2026 fei_cong(https://github.com/feicong/feicong-course)
-
 import com.eltavine.duckdetector.features.tee.data.attestation.AttestationSnapshot
 import com.eltavine.duckdetector.features.tee.data.attestation.AttestedApplicationInfo
 import com.eltavine.duckdetector.features.tee.data.attestation.AttestedAuthState
@@ -58,7 +56,7 @@ import com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyboxI
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyboxImportResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2GenerateModeParcelFingerprintResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2HookResult
-import com.eltavine.duckdetector.features.tee.data.verification.keystore.CertPathResult
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2PostProcessingResult
 import com.eltavine.duckdetector.features.tee.data.verification.rkp.RkpProvisionedManufacturerResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.LegacyKeystorePathResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.ListEntriesBatchedResult
@@ -70,6 +68,8 @@ import com.eltavine.duckdetector.features.tee.data.verification.keystore.PureCer
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.PureCertificateSecurityLevelResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.SupplementaryAttestationInfoAnomalyKind
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.SupplementaryAttestationInfoResult
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingAnomalyResult
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingSideChannelResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.UpdateSubcomponentResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.UpdateSubcomponentStaleResponseAnomalyKind
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.UpdateSubcomponentStaleResponsePersistenceResult
@@ -91,7 +91,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class TeeReducerTest {
+class TeeReportReducerTest {
 
     private val reducer = TeeReportReducer()
 
@@ -1289,12 +1289,484 @@ class TeeReducerTest {
     }
 
     @Test
-    fun noTimingRows() {
-        val report = reducer.reduce(baseArtifacts())
-        val rows = report.sections.flatMap { it.items }
-        assertFalse(rows.any { it.title == "Timing" || it.title == "Timing side-channel" })
+    fun `timing probe warning stays in checks without creating supplementary review`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                timing = TimingAnomalyResult(
+                    suspicious = true,
+                    medianMicros = 299,
+                    detail = "Timing side-channel diff 0.299ms stayed below the 0.3ms positive threshold.",
+                ),
+            ),
+        )
+
         assertEquals(TeeVerdict.CONSISTENT, report.verdict)
         assertEquals(0, report.supplementaryIndicatorCount)
+        assertTrue(report.signals.any {
+            it.label == "Signals" &&
+                    it.value == "0 policy hard • 0 policy review • 0 local" &&
+                    it.level == TeeSignalLevel.PASS
+        })
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing" &&
+                    it.body == "Fast/steady • 299us" &&
+                    it.level == TeeSignalLevel.WARN
+        })
+        assertEquals("Attestation, trust path, and revocation checks line up.", report.summary)
+    }
+
+    @Test
+    fun `timing probe equality threshold remains non positive in reducer output`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                timing = TimingAnomalyResult(
+                    suspicious = false,
+                    medianMicros = 300,
+                    detail = "Timing side-channel diff 0.3ms matched the threshold and remained non-positive.",
+                ),
+            ),
+        )
+
+        assertEquals(TeeVerdict.CONSISTENT, report.verdict)
+        assertEquals(0, report.supplementaryIndicatorCount)
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing" &&
+                    it.body == "Median 300us" &&
+                    it.level == TeeSignalLevel.INFO
+        })
+        assertTrue(report.signals.any {
+            it.label == "Signals" &&
+                    it.value == "0 policy hard • 0 policy review • 0 local" &&
+                    it.level == TeeSignalLevel.PASS
+        })
+    }
+
+    @Test
+    fun `timing side-channel positive result becomes supplementary review and exposes metrics`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                timingSideChannel = TimingSideChannelResult(
+                    probeRan = true,
+                    measurementAvailable = true,
+                    suspicious = true,
+                    sampleCount = 18,
+                    attemptedPairCount = 20,
+                    successfulPairCount = 20,
+                    failedPairCount = 0,
+                    filteredOutlierCount = 2,
+                    ratioEligible = true,
+                    warmupCount = 5,
+                    avgAttestedMillis = 0.612,
+                    avgNonAttestedMillis = 0.400,
+                    diffMillis = 0.212,
+                    detail = "register timer source; avgAttested=0.612ms, avgNonAttested=0.400ms, diff=0.212ms",
+                ),
+            ),
+        )
+
+        assertEquals(TeeVerdict.CONSISTENT, report.verdict)
+        assertEquals(1, report.supplementaryIndicatorCount)
+        assertTrue(report.summary.contains("timing side-channel", ignoreCase = true))
+        assertTrue(report.summary.contains("supplementary", ignoreCase = true))
+        assertTrue(report.summary.contains("ratio 1.53x exceeded 1.1x", ignoreCase = true))
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing side-channel" &&
+                    it.body.contains("Register timer") &&
+                    it.body.contains("attested 0.612ms") &&
+                    it.body.contains("non-attested 0.400ms") &&
+                    it.body.contains("diff 0.212ms") &&
+                    it.body.contains("failedPairs=0/20") &&
+                    it.body.contains("outlierFiltered=2/20") &&
+                    it.body.contains("samples=18") &&
+                    it.body.contains("ratio 1.530x") &&
+                    it.body.contains("threshold > 1.1x") &&
+                    it.level == TeeSignalLevel.WARN
+        })
+    }
+
+    @Test
+    fun `timing side-channel insufficient samples skip ratio without supplementary review`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                timingSideChannel = TimingSideChannelResult(
+                    probeRan = true,
+                    measurementAvailable = true,
+                    suspicious = true,
+                    sampleCount = 299,
+                    attemptedPairCount = 500,
+                    successfulPairCount = 320,
+                    failedPairCount = 180,
+                    filteredOutlierCount = 21,
+                    ratioEligible = false,
+                    ratioSkipReason = "insufficientSamples=299/300",
+                    warmupCount = 5,
+                    avgAttestedMillis = 0.612,
+                    avgNonAttestedMillis = 0.400,
+                    diffMillis = 0.212,
+                    detail = "register timer source; insufficientSamples=299/300",
+                ),
+            ),
+        )
+
+        assertEquals(TeeVerdict.CONSISTENT, report.verdict)
+        assertEquals(0, report.supplementaryIndicatorCount)
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing side-channel" &&
+                    it.body.contains("ratio skipped") &&
+                    it.body.contains("failedPairs=180/500") &&
+                    it.body.contains("outlierFiltered=21/320") &&
+                    it.body.contains("samples=299") &&
+                    it.body.contains("insufficientSamples=299/300") &&
+                    it.body.contains("Ratio skipped") &&
+                    !it.body.contains("Positive") &&
+                    it.level == TeeSignalLevel.INFO
+        })
+    }
+
+    @Test
+    fun `timing side-channel invalid ratio stays informational`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                timingSideChannel = TimingSideChannelResult(
+                    probeRan = true,
+                    measurementAvailable = true,
+                    suspicious = false,
+                    sampleCount = 20,
+                    warmupCount = 5,
+                    avgAttestedMillis = 0.200,
+                    avgNonAttestedMillis = 0.000,
+                    diffMillis = 0.200,
+                    detail = "fallback timer path; avgAttested=0.200ms, avgNonAttested=0.000ms, diff=0.200ms",
+                ),
+            ),
+        )
+
+        assertEquals(TeeVerdict.CONSISTENT, report.verdict)
+        assertEquals(0, report.supplementaryIndicatorCount)
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing side-channel" &&
+                    it.body.contains("Fallback timer") &&
+                    it.body.contains("diff 0.200ms") &&
+                    it.body.contains("ratio n/a") &&
+                    it.body.contains("Not positive") &&
+                    it.level == TeeSignalLevel.INFO
+        })
+    }
+
+    @Test
+    fun `timing side-channel negative threshold breach becomes supplementary review with fallback wording`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                timingSideChannel = TimingSideChannelResult(
+                    probeRan = true,
+                    measurementAvailable = true,
+                    suspicious = true,
+                    sampleCount = 20,
+                    warmupCount = 5,
+                    avgAttestedMillis = 0.100,
+                    avgNonAttestedMillis = 0.450,
+                    diffMillis = -0.350,
+                    detail = "fallback timer path; avgAttested=0.100ms, avgNonAttested=0.450ms, diff=-0.350ms",
+                ),
+            ),
+        )
+
+        assertEquals(TeeVerdict.CONSISTENT, report.verdict)
+        assertEquals(1, report.supplementaryIndicatorCount)
+        assertTrue(report.summary.contains("Fallback timer timing side-channel stayed supplementary"))
+        assertTrue(report.summary.contains("ratio 4.50x exceeded 1.1x"))
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing side-channel" &&
+                    it.body.contains("Fallback timer") &&
+                    it.body.contains("diff -0.350ms") &&
+                    it.body.contains("ratio 4.500x") &&
+                    it.body.contains("threshold > 1.1x") &&
+                    it.level == TeeSignalLevel.WARN
+        })
+    }
+
+    @Test
+    fun `timing side-channel degraded result still shows timer affinity and reason`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                timingSideChannel = TimingSideChannelResult(
+                    probeRan = true,
+                    measurementAvailable = false,
+                    suspicious = false,
+                    sampleCount = 500,
+                    warmupCount = 5,
+                    source = "keystore2_getKeyEntry_binder",
+                    timerSource = "arm64_cntvct",
+                    affinity = "bound_cpu0",
+                    failureReason = "Keystore2 getKeyEntry transact returned false",
+                    stackCopyPayload = "phase=warmup.attested[0]\nsummary=ServiceSpecificException(code 7)",
+                    detail = "measurement unavailable after binder transact failure",
+                ),
+            ),
+        )
+
+        assertEquals(TeeVerdict.CONSISTENT, report.verdict)
+        assertEquals(0, report.supplementaryIndicatorCount)
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing side-channel" &&
+                    it.body.contains("Register timer") &&
+                    it.body.contains("bound_cpu0") &&
+                    it.body.contains("Measurement unavailable") &&
+                    it.body.contains("reason Keystore2 getKeyEntry transact returned false") &&
+                    it.level == TeeSignalLevel.INFO
+        })
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing side-channel" &&
+                it.hiddenCopyText?.contains("phase=warmup.attested[0]") == true
+        })
+    }
+
+    @Test
+    fun `timing side-channel skipped getKeyEntry stack marks tricky-store patch mode as fail`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                timingSideChannel = TimingSideChannelResult(
+                    probeRan = true,
+                    measurementAvailable = false,
+                    sampleCount = 0,
+                    warmupCount = 5,
+                    timerSource = "arm64_cntvct",
+                    affinity = "bound_cpu0",
+                    failureReason = "cleanup failed",
+                    stackCopyPayload = """
+                        phase=warmup.attested[0]
+                        summary=ServiceSpecificException(code 7)
+
+                        Caused by: android.os.ServiceSpecificException (code 7)
+                        	at android.os.Parcel.createException(Parcel.java:3353)
+                        	at android.os.Parcel.readException(Parcel.java:3336)
+                        	at ${'$'}Proxy5.getKeyEntry(Unknown Source)
+                    """.trimIndent(),
+                    detail = "measurement unavailable after getKeyEntry failure",
+                ),
+            ),
+        )
+
+        assertEquals(TeeVerdict.CONSISTENT, report.verdict)
+        assertEquals(1, report.supplementaryIndicatorCount)
+        assertTrue(report.summary.contains("Detected malicious-module fingerprint during timing skip", ignoreCase = true))
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing side-channel" &&
+                    it.body.contains("Detected malicious-module fingerprint") &&
+                    it.body.contains("Register timer") &&
+                    it.body.contains("bound_cpu0") &&
+                    it.level == TeeSignalLevel.FAIL
+        })
+        assertFalse(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing side-channel" && it.body.contains("Measurement unavailable")
+        })
+    }
+
+    @Test
+    fun `timing side-channel skipped generateKey and deleteKey stack marks tee simulator patch mode as fail`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                timingSideChannel = TimingSideChannelResult(
+                    probeRan = true,
+                    measurementAvailable = false,
+                    sampleCount = 0,
+                    warmupCount = 5,
+                    timerSource = "clock_monotonic",
+                    affinity = "not_requested",
+                    failureReason = "security level generateKey failed",
+                    stackCopyPayload = """
+                        phase=securityLevel.generateKey
+                        summary=ServiceSpecificException(code -49)
+
+                        android.os.ServiceSpecificException (code -49)
+                        	at android.os.Parcel.createExceptionOrNull(Parcel.java:3383)
+                        	at android.os.Parcel.createException(Parcel.java:3353)
+                        	at android.os.Parcel.readException(Parcel.java:3336)
+                        	at ${'$'}Proxy7.generateKey(Unknown Source)
+
+                        Caused by:
+                            0: Legacy database is empty.
+                            1: Error::Rc(r#KEY_NOT_FOUND) (code 7)
+                        	at ${'$'}Proxy5.deleteKey(Unknown Source)
+                    """.trimIndent(),
+                    detail = "measurement unavailable after legacy database failure",
+                ),
+            ),
+        )
+
+        assertEquals(TeeVerdict.CONSISTENT, report.verdict)
+        assertEquals(1, report.supplementaryIndicatorCount)
+        assertTrue(report.summary.contains("Detected malicious-module fingerprint during timing skip", ignoreCase = true))
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing side-channel" &&
+                    it.body.contains("Detected malicious-module fingerprint") &&
+                    it.body.contains("Fallback timer") &&
+                    it.body.contains("not_requested") &&
+                    it.level == TeeSignalLevel.FAIL
+        })
+        assertFalse(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing side-channel" && it.body.contains("Measurement unavailable")
+        })
+    }
+
+    @Test
+    fun `timing side-channel skipped legacy database code 75 stack marks tee simulator patch and generate mode as fail`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                timingSideChannel = TimingSideChannelResult(
+                    probeRan = true,
+                    measurementAvailable = false,
+                    sampleCount = 0,
+                    warmupCount = 5,
+                    timerSource = "clock_monotonic",
+                    affinity = "not_requested",
+                    failureReason = "security level generateKey failed",
+                    stackCopyPayload = """
+                        phase=securityLevel.generateKey
+                        summary=ServiceSpecificException(code -75)
+
+                        android.os.ServiceSpecificException (code -75)
+                        	at android.os.Parcel.createExceptionOrNull(Parcel.java:3270)
+                        	at android.os.Parcel.createException(Parcel.java:3240)
+                        	at android.os.Parcel.readException(Parcel.java:3223)
+
+                        Caused by:
+                            0: Legacy database is empty.
+                            1: Error::Rc(r#KEY_NOT_FOUND) (code 7)
+                    """.trimIndent(),
+                    detail = "measurement unavailable after legacy database failure",
+                ),
+            ),
+        )
+
+        assertEquals(TeeVerdict.CONSISTENT, report.verdict)
+        assertEquals(2, report.supplementaryIndicatorCount)
+        assertTrue(report.summary.contains("Detected malicious-module fingerprint during timing skip", ignoreCase = true))
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing side-channel" &&
+                    it.body.contains("Detected malicious-module fingerprint") &&
+                    it.body.contains("Fallback timer") &&
+                    it.body.contains("not_requested") &&
+                    it.level == TeeSignalLevel.FAIL
+        })
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "TEE Simulator generate-mode fingerprint" &&
+                    it.body.contains("Matched TEE Simulator generate-mode fingerprint.") &&
+                    it.level == TeeSignalLevel.FAIL &&
+                    it.hiddenCopyText == null
+        })
+        assertFalse(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing side-channel" && it.body.contains("Measurement unavailable")
+        })
+    }
+
+    @Test
+    fun `timing side-channel skipped parcel trio falls back to warning private binder exception`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                timingSideChannel = TimingSideChannelResult(
+                    probeRan = true,
+                    measurementAvailable = false,
+                    sampleCount = 0,
+                    warmupCount = 5,
+                    timerSource = "clock_monotonic",
+                    affinity = "not_requested",
+                    failureReason = "security level probe failed",
+                    stackCopyPayload = """
+                        phase=securityLevel.generateKey
+                        summary=ServiceSpecificException(code -1)
+
+                        android.os.ServiceSpecificException (code -1)
+                        	at android.os.Parcel.createExceptionOrNull(Parcel.java:3270)
+                        	at android.os.Parcel.createException(Parcel.java:3240)
+                        	at android.os.Parcel.readException(Parcel.java:3223)
+                    """.trimIndent(),
+                    detail = "measurement unavailable after generic parcel failure",
+                ),
+            ),
+        )
+
+        assertEquals(TeeVerdict.CONSISTENT, report.verdict)
+        assertEquals(1, report.supplementaryIndicatorCount)
+        assertTrue(report.summary.contains("private binder exception during timing skip", ignoreCase = true))
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing side-channel" &&
+                    it.body.contains("Captured private binder exception during timing skip") &&
+                    it.body.contains("Fallback timer") &&
+                    it.body.contains("not_requested") &&
+                    it.level == TeeSignalLevel.WARN
+        })
+        assertFalse(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing side-channel" && it.body.contains("Measurement unavailable")
+        })
+    }
+
+    @Test
+    fun `timing side-channel negative measured result still shows timer and affinity`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                timingSideChannel = TimingSideChannelResult(
+                    probeRan = true,
+                    measurementAvailable = true,
+                    suspicious = false,
+                    sampleCount = 1000,
+                    warmupCount = 5,
+                    avgAttestedMillis = 0.280,
+                    avgNonAttestedMillis = 0.120,
+                    diffMillis = 0.160,
+                    source = "keystore2_getKeyEntry_binder",
+                    timerSource = "arm64_cntvct",
+                    affinity = "bound_cpu0",
+                    detail = "stable negative measurement",
+                ),
+            ),
+        )
+
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing side-channel" &&
+                    it.body.contains("Register timer") &&
+                    it.body.contains("bound_cpu0") &&
+                    it.body.contains("attested 0.280ms") &&
+                    it.body.contains("non-attested 0.120ms") &&
+                    it.body.contains("diff 0.160ms") &&
+                    it.body.contains("Not positive") &&
+                    it.level == TeeSignalLevel.INFO
+        })
+    }
+
+    @Test
+    fun `timing side-channel partial samples still show available timing context`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                timingSideChannel = TimingSideChannelResult(
+                    probeRan = true,
+                    measurementAvailable = true,
+                    suspicious = false,
+                    sampleCount = 1000,
+                    warmupCount = 5,
+                    avgAttestedMillis = 0.310,
+                    avgNonAttestedMillis = null,
+                    diffMillis = null,
+                    source = "keystore2_getKeyEntry_binder",
+                    timerSource = "arm64_cntvct",
+                    affinity = "bound_cpu0",
+                    failureReason = "non-attested path unavailable",
+                    detail = "partial timing measurement",
+                ),
+            ),
+        )
+
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing side-channel" &&
+                    it.body.contains("Register timer") &&
+                    it.body.contains("bound_cpu0") &&
+                    it.body.contains("attested 0.310ms") &&
+                    it.body.contains("non-attested n/a") &&
+                    it.body.contains("diff n/a") &&
+                    it.body.contains("Not positive") &&
+                    it.body.contains("reason non-attested path unavailable") &&
+                    it.level == TeeSignalLevel.INFO
+        })
     }
 
     @Test
@@ -1829,6 +2301,19 @@ class TeeReducerTest {
             decryptMicros = 1700,
             detail = "ok",
         ),
+        timing: TimingAnomalyResult = TimingAnomalyResult(
+            suspicious = false,
+            medianMicros = 1800,
+            detail = "ok",
+        ),
+        timingSideChannel: TimingSideChannelResult = TimingSideChannelResult(
+            probeRan = false,
+            measurementAvailable = false,
+            timerSource = "unknown",
+            affinity = "not_requested",
+            failureReason = "skipped",
+            detail = "skipped",
+        ),
         strongBox: StrongBoxBehaviorResult = StrongBoxBehaviorResult(
             requested = false,
             advertised = false,
@@ -1882,7 +2367,7 @@ class TeeReducerTest {
             executed = false,
             detail = "skipped",
         ),
-        postProcessing: CertPathResult = CertPathResult(
+        postProcessing: Keystore2PostProcessingResult = Keystore2PostProcessingResult(
             probeRan = false,
             detail = "skipped",
         ),
@@ -2000,6 +2485,8 @@ class TeeReducerTest {
                 detail = "ok",
             ),
             keyMintCapability = keyMintCapability,
+            timing = timing,
+            timingSideChannel = timingSideChannel,
             oversizedChallenge = oversizedChallenge,
             keyboxImport = KeyboxImportResult(
                 executed = false,

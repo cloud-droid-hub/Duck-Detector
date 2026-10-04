@@ -118,6 +118,34 @@ class Keystore2PrivateBinderClientTest {
     }
 
     @Test
+    fun `positive ratio helper is symmetric around threshold`() {
+        assertTrue(
+            isPositiveTimingSideChannelRatio(
+                avgAttestedMillis = 1.1001,
+                avgNonAttestedMillis = 1.0,
+            ),
+        )
+        assertTrue(
+            isPositiveTimingSideChannelRatio(
+                avgAttestedMillis = 1.0,
+                avgNonAttestedMillis = 1.1001,
+            ),
+        )
+        assertFalse(
+            isPositiveTimingSideChannelRatio(
+                avgAttestedMillis = 1.1,
+                avgNonAttestedMillis = 1.0,
+            ),
+        )
+        assertFalse(
+            isPositiveTimingSideChannelRatio(
+                avgAttestedMillis = 1.0,
+                avgNonAttestedMillis = 1.1,
+            ),
+        )
+    }
+
+    @Test
     fun `key parameter setter mapping follows AOSP keymint union shape`() {
         assertEquals("setAlgorithm", keyParameterSetterNameForTag(0x10000002))
         assertEquals("setEcCurve", keyParameterSetterNameForTag(0x1000000A))
