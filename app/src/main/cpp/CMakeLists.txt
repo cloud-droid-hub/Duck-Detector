@@ -3,6 +3,8 @@ project("duckdetector" LANGUAGES C CXX ASM)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# All sources use ordinary translation units; the registered NDK omits clang-scan-deps.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 set(TEE_COMMON_SOURCES
     tee/common/jni_bridge.cpp
